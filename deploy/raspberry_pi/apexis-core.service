@@ -1,0 +1,53 @@
+[Unit]
+Description=APEXIS Headquarters Core API
+Documentation=file:///opt/apexis-core/releases/0.1.0/README.md
+Wants=network-online.target
+After=network-online.target
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=apexis
+Group=apexis
+WorkingDirectory=/var/lib/apexis
+
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=PYTHONUNBUFFERED=1
+
+ExecStart=/opt/apexis-core/venv/bin/uvicorn apexis_core.app:app --host 0.0.0.0 --port 8088 --workers 1
+
+Restart=on-failure
+RestartSec=5
+TimeoutStartSec=30
+TimeoutStopSec=15
+UMask=0077
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectHostname=yes
+ProtectClock=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+SystemCallArchitectures=native
+ReadWritePaths=/var/lib/apexis /var/log/apexis
+
+TasksMax=64
+LimitNOFILE=1024
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=apexis-core
+
+[Install]
+WantedBy=multi-user.target
