@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "apexis-desktop"
-version = "0.1.0"
+version = "0.2.0"
 description = "APEXIS Brain Node desktop and CLI client"
 requires-python = ">=3.12,<3.14"
 dependencies = [
@@ -18,7 +18,7 @@ test = [
 ]
 
 [project.scripts]
-apexis = "apexis_desktop.status:main"
+apexis = "apexis_desktop.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

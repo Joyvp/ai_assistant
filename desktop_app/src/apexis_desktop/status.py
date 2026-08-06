@@ -83,8 +83,28 @@ def fetch_health(
     return StatusResult(health=health, latency_ms=latency_ms)
 
 
+def status_main(core_url: str) -> int:
+    """Request and print Headquarters status."""
+
+    try:
+        result = fetch_health(core_url)
+    except (CoreStatusError, ValueError) as exc:
+        print("APEXIS Headquarters: OFFLINE", file=sys.stderr)
+        print(f"Reason: {exc}", file=sys.stderr)
+        return 1
+
+    health = result.health
+    print("APEXIS Headquarters: ONLINE")
+    print(f"Service: {health.service}")
+    print(f"Core version: {health.version}")
+    print(f"API version: {health.api_version}")
+    print(f"Latency: {result.latency_ms:.1f} ms")
+    print(f"Core timestamp: {health.timestamp.isoformat()}")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
-    """Create the command-line parser."""
+    """Create the legacy status-only command-line parser."""
 
     parser = argparse.ArgumentParser(
         prog="apexis",
@@ -99,25 +119,10 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> int:
-    """Run the APEXIS status command."""
+    """Run the backward-compatible status command."""
 
     args = build_parser().parse_args()
-
-    try:
-        result = fetch_health(args.url)
-    except (CoreStatusError, ValueError) as exc:
-        print("APEXIS Headquarters: OFFLINE", file=sys.stderr)
-        print(f"Reason: {exc}", file=sys.stderr)
-        return 1
-
-    health = result.health
-    print("APEXIS Headquarters: ONLINE")
-    print(f"Service: {health.service}")
-    print(f"Core version: {health.version}")
-    print(f"API version: {health.api_version}")
-    print(f"Latency: {result.latency_ms:.1f} ms")
-    print(f"Core timestamp: {health.timestamp.isoformat()}")
-    return 0
+    return status_main(args.url)
 
 
 if __name__ == "__main__":
