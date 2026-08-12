@@ -28,11 +28,8 @@ DEFAULT_MODEL = "phi3:mini"
 # usable. Ollama's own default is 5m.
 DEFAULT_KEEP_ALIVE = "5m"
 
-DEFAULT_SYSTEM_PROMPT = (
-    "You are APEXIS, a personal assistant running locally on the user's "
-    "laptop. Be concise and direct. If you do not know something, say so "
-    "plainly rather than guessing."
-)
+# Personality lives in personality.py so it can be swapped at runtime.
+from apexis_desktop import personality
 
 
 class OllamaError(RuntimeError):
@@ -52,7 +49,7 @@ class OllamaProvider:
         model: str | None = None,
         host: str | None = None,
         keep_alive: str | None = None,
-        system_prompt: str = DEFAULT_SYSTEM_PROMPT,
+        system_prompt: str | None = None,
         timeout: float = 120.0,
         client: httpx.Client | None = None,
     ) -> None:
@@ -61,7 +58,7 @@ class OllamaProvider:
         self.keep_alive = keep_alive or os.getenv(
             "APEXIS_KEEP_ALIVE", DEFAULT_KEEP_ALIVE
         )
-        self.system_prompt = system_prompt
+        self.system_prompt = system_prompt or personality.get()
         self.timeout = timeout
 
         self._client = client

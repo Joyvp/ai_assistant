@@ -6,8 +6,10 @@ covered by the existing tests). This one prints tokens as they arrive.
 
 from __future__ import annotations
 
+import os
 import sys
 
+from apexis_desktop import personality
 from apexis_desktop.brain.ollama import OllamaError, OllamaProvider
 
 
@@ -31,6 +33,8 @@ HELP = """\
     /model    show the current model
     /models   list installed models
     /context  how many messages are in context
+    /persona  list personalities
+    /persona <name>  switch personality
     /exit     quit
 """
 
@@ -83,7 +87,12 @@ def _preflight(provider: OllamaProvider) -> int:
     return 0
 
 
-def run_talk(provider: OllamaProvider | None = None, *, show_banner: bool = True) -> int:
+def run_talk(
+    provider: OllamaProvider | None = None,
+    *,
+    show_banner: bool = True,
+    persona: str | None = None,
+) -> int:
     """Run the streaming chat loop. Returns a process exit code."""
     provider = provider or OllamaProvider()
 
@@ -94,8 +103,11 @@ def run_talk(provider: OllamaProvider | None = None, *, show_banner: bool = True
     if code:
         return code
 
+    current_persona = persona or os.getenv("APEXIS_PERSONA") or personality.DEFAULT_PERSONA
+
     print(f"  {DIM}model{OFF}  {provider.model}")
     print(f"  {DIM}host {OFF}  {provider.host}")
+    print(f"  {DIM}style{OFF}  {current_persona}")
     print(f"  {DIM}/help for commands, /exit to quit{OFF}\n")
 
     while True:
@@ -139,6 +151,25 @@ def run_talk(provider: OllamaProvider | None = None, *, show_banner: bool = True
 
         if lowered == "/context":
             print(f"  {provider.turns} messages in context\n")
+            continue
+
+        if lowered.startswith("/persona"):
+            parts = message.split(maxsplit=1)
+            if len(parts) == 1:
+                print()
+                for n in personality.available():
+                    marker = "\u2192" if n == current_persona else " "
+                    print(f"  {marker} {n:<11} {personality.describe(n)}")
+                print(f"\n  {DIM}switch with:  /persona blunt{OFF}\n")
+            else:
+                choice = parts[1].strip().lower()
+                if choice not in personality.available():
+                    print(f"  {YELLOW}no persona {choice!r}{OFF}\n")
+                else:
+                    provider.system_prompt = personality.get(choice)
+                    current_persona = choice
+                    provider.reset()
+                    print(f"  {DIM}persona -> {choice} (context cleared){OFF}\n")
             continue
 
         # --- generate -----------------------------------------------------

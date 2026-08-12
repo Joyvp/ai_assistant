@@ -44,6 +44,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="How long Ollama keeps the model loaded (default: 5m)",
     )
     talk_parser.add_argument(
+        "--persona",
+        help="Personality: casual, blunt, technical, friendly, assistant, custom",
+    )
+    talk_parser.add_argument(
         "--no-banner",
         action="store_true",
         help="Skip the startup banner",
@@ -62,6 +66,7 @@ def main() -> int:
 
     if args.command == "talk":
         # Imported lazily so `apexis status` does not pay for it.
+        from apexis_desktop import personality
         from apexis_desktop.brain.ollama import OllamaProvider
         from apexis_desktop.talk import run_talk
 
@@ -69,9 +74,14 @@ def main() -> int:
             model=args.model,
             host=args.host,
             keep_alive=args.keep_alive,
+            system_prompt=personality.get(args.persona) if args.persona else None,
         )
         try:
-            return run_talk(provider, show_banner=not args.no_banner)
+            return run_talk(
+                provider,
+                show_banner=not args.no_banner,
+                persona=args.persona,
+            )
         finally:
             provider.close()
 
