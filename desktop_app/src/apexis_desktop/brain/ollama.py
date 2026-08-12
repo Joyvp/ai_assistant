@@ -52,6 +52,7 @@ class OllamaProvider:
         system_prompt: str | None = None,
         timeout: float = 120.0,
         client: httpx.Client | None = None,
+        memory: object | None = None,
     ) -> None:
         self.model = model or os.getenv("APEXIS_MODEL", DEFAULT_MODEL)
         self.host = (host or os.getenv("APEXIS_OLLAMA_HOST", DEFAULT_HOST)).rstrip("/")
@@ -59,6 +60,11 @@ class OllamaProvider:
             "APEXIS_KEEP_ALIVE", DEFAULT_KEEP_ALIVE
         )
         self.system_prompt = system_prompt or personality.get()
+
+        # Optional Memory instance. When present, remembered facts are
+        # appended to the system prompt on every request, so newly added
+        # facts take effect immediately without a restart.
+        self.memory = memory
         self.timeout = timeout
 
         self._client = client
@@ -123,9 +129,22 @@ class OllamaProvider:
 
     # -- generation --------------------------------------------------------
 
+    def _system_content(self) -> str:
+        """System prompt plus any remembered facts."""
+        if self.memory is None:
+            return self.system_prompt
+
+        try:
+            block = self.memory.facts_block()
+        except Exception:
+            # Memory must never break generation.
+            return self.system_prompt
+
+        return f"{self.system_prompt}{block}" if block else self.system_prompt
+
     def _messages_for(self, message: str) -> list[dict[str, str]]:
         return [
-            {"role": "system", "content": self.system_prompt},
+            {"role": "system", "content": self._system_content()},
             *self._history,
             {"role": "user", "content": message},
         ]

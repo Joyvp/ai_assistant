@@ -8,8 +8,10 @@ from __future__ import annotations
 
 import os
 import sys
+from datetime import datetime
 
 from apexis_desktop import personality
+from apexis_desktop.memory import Memory
 from apexis_desktop.brain.ollama import OllamaError, OllamaProvider
 
 
@@ -35,6 +37,13 @@ HELP = """\
     /context  how many messages are in context
     /persona  list personalities
     /persona <name>  switch personality
+
+  \033[1mMemory\033[0m
+    /remember <fact>   remember something permanently
+    /facts             list what is remembered
+    /forget <id>       delete one fact
+    /memory            storage stats
+
     /exit     quit
 """
 
@@ -92,6 +101,8 @@ def run_talk(
     *,
     show_banner: bool = True,
     persona: str | None = None,
+    memory: Memory | None = None,
+    session: str | None = None,
 ) -> int:
     """Run the streaming chat loop. Returns a process exit code."""
     provider = provider or OllamaProvider()
@@ -103,11 +114,21 @@ def run_talk(
     if code:
         return code
 
+    owns_memory = memory is None
+    memory = memory or Memory()
+    provider.memory = memory
+
+    session = session or datetime.now().strftime("%Y%m%d-%H%M%S")
+
     current_persona = persona or os.getenv("APEXIS_PERSONA") or personality.DEFAULT_PERSONA
 
     print(f"  {DIM}model{OFF}  {provider.model}")
     print(f"  {DIM}host {OFF}  {provider.host}")
     print(f"  {DIM}style{OFF}  {current_persona}")
+
+    _stats = memory.stats()
+    if _stats["facts"]:
+        print(f"  {DIM}memory{OFF} {_stats['facts']} facts remembered")
     print(f"  {DIM}/help for commands, /exit to quit{OFF}\n")
 
     while True:
@@ -115,6 +136,8 @@ def run_talk(
             message = input(f"{GREEN}you{OFF} › ").strip()
         except (EOFError, KeyboardInterrupt):
             print(f"\n\n  {DIM}bye.{OFF}\n")
+            if owns_memory:
+                memory.close()
             return 0
 
         if not message:
@@ -124,6 +147,8 @@ def run_talk(
 
         if lowered in EXIT_COMMANDS:
             print(f"\n  {DIM}bye.{OFF}\n")
+            if owns_memory:
+                memory.close()
             return 0
 
         if lowered == "/help":
@@ -151,6 +176,44 @@ def run_talk(
 
         if lowered == "/context":
             print(f"  {provider.turns} messages in context\n")
+            continue
+
+        if lowered.startswith("/remember"):
+            fact = message[len("/remember"):].strip()
+            if not fact:
+                print(f"  {DIM}usage: /remember my project is called APEXIS{OFF}\n")
+            else:
+                stored = memory.remember(fact)
+                print(f"  {GREEN}remembered{OFF} [{stored.id}] {stored.text}\n")
+            continue
+
+        if lowered == "/facts":
+            stored = memory.facts()
+            if not stored:
+                print(f"  {DIM}nothing remembered yet — try /remember{OFF}\n")
+            else:
+                print()
+                for f in stored:
+                    print(f"  [{f.id}] {f.text}  {DIM}{f.when}{OFF}")
+                print()
+            continue
+
+        if lowered.startswith("/forget"):
+            arg = message[len("/forget"):].strip()
+            if not arg.isdigit():
+                print(f"  {DIM}usage: /forget 3   (see ids with /facts){OFF}\n")
+            elif memory.forget(int(arg)):
+                print(f"  {DIM}forgot fact {arg}{OFF}\n")
+            else:
+                print(f"  {YELLOW}no fact with id {arg}{OFF}\n")
+            continue
+
+        if lowered == "/memory":
+            st = memory.stats()
+            print(f"\n  facts     {st['facts']}")
+            print(f"  messages  {st['messages']}")
+            print(f"  sessions  {st['sessions']}")
+            print(f"  file      {memory.path}\n")
             continue
 
         if lowered.startswith("/persona"):
@@ -186,6 +249,11 @@ def run_talk(
                 print(f"{DIM}(no response){OFF}", end="")
 
             print("\n")
+
+            # Transcript only. Facts still require an explicit /remember.
+            memory.log(session, "user", message)
+            if provider._history:
+                memory.log(session, "assistant", provider._history[-1]["content"])
 
         except OllamaError as exc:
             print(f"\n  {RED}{exc}{OFF}\n")
