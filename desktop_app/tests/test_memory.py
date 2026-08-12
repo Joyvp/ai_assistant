@@ -289,3 +289,30 @@ def test_db_path_respects_xdg(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
 
     assert default_db_path() == tmp_path / "apexis" / "memory.db"
+
+
+# -- first-person disambiguation -------------------------------------------
+
+
+def test_facts_block_attributes_quotes_to_the_user(mem: Memory) -> None:
+    """Regression: raw first-person facts confused the model about who "I" was.
+
+    phi3:mini received 'I live in Saskatoon' in its system prompt and read the
+    "I" as itself, answering with hedging like "You say you reside there, but
+    that isn't clear." Quoting and attributing each fact fixes it.
+    """
+    mem.remember("I live in Saskatoon")
+
+    block = mem.facts_block()
+
+    assert 'The user said: "I live in Saskatoon"' in block
+    assert "FACTS YOU KNOW ABOUT THE USER" in block
+
+
+def test_facts_block_tells_model_not_to_hedge(mem: Memory) -> None:
+    mem.remember("my name is Joy")
+
+    block = mem.facts_block().lower()
+
+    assert "directly" in block
+    assert "clarify" in block

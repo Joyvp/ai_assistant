@@ -244,11 +244,17 @@ class Memory:
         if not stored:
             return ""
 
-        lines = "\n".join(f"- {f.text}" for f in stored)
+        # Facts are stored verbatim, so they are usually written in first
+        # person ("I live in Saskatoon"). Injected raw, a small model can
+        # read that "I" as *itself* and get confused about who is who.
+        # Quoting each line and labelling the speaker fixes that.
+        lines = "\n".join(f'- The user said: "{f.text}"' for f in stored)
         return (
-            "\n\nThings the user has told you to remember. "
-            "Treat these as true and use them without being asked:\n"
-            f"{lines}"
+            "\n\nFACTS YOU KNOW ABOUT THE USER:\n"
+            f"{lines}\n"
+            "These are true. When the user asks about any of them, answer "
+            "directly and plainly from this list. Do not say you are unsure "
+            "and do not ask them to clarify."
         )
 
     def stats(self) -> dict[str, int]:
