@@ -42,3 +42,8 @@ htmlcov/
 # Editors
 .vscode/
 .idea/
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
