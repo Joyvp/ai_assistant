@@ -330,7 +330,7 @@ def test_cloud_handler_is_used_when_present() -> None:
     assert result.tier is Tier.CLOUD
     assert result.went_online is True
     assert result.reply == "cloud says hello"
-    assert any("logged" in n.lower() for n in result.notices)
+    assert any("beyond the local models" in n.lower() for n in result.notices)
 
 
 def test_going_online_is_always_announced() -> None:

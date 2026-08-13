@@ -370,8 +370,12 @@ def run_talk(
 
                 # Show the destination before the reply, so a pause has a
                 # visible reason: loading a 2.2GB model takes a few seconds.
-                icon = "▸" if plan.tier is Tier.PI_LOCAL else "▲"
-                colour = GREEN if plan.tier is Tier.PI_LOCAL else YELLOW
+                if plan.tier is Tier.CLOUD:
+                    icon, colour = "☁", RED
+                elif plan.tier is Tier.PI_LOCAL:
+                    icon, colour = "▸", GREEN
+                else:
+                    icon, colour = "▲", YELLOW
                 print(
                     f"  {colour}{icon}{OFF} {DIM}{plan.where} · {plan.model}"
                     f" · score {plan.decision.complexity}{OFF}",
@@ -385,6 +389,7 @@ def run_talk(
             print(f"{CYAN}apexis{OFF} › ", end="", flush=True)
 
             got_output = False
+            _handoff_shown = False
             stream = chat.ask(message, plan) if routed else provider.stream(message)
             for chunk in stream:
                 sys.stdout.write(chunk)
@@ -395,6 +400,20 @@ def run_talk(
                 print(f"{DIM}(no response){OFF}", end="")
 
             print()
+
+            if routed and plan.handoff:
+                print(f"\n  {BOLD}Beyond the local models.{OFF} "
+                      f"{DIM}Paste this anywhere:{OFF}\n")
+                print(f"{DIM}{'─' * 60}{OFF}")
+                print(plan.handoff)
+                print(f"{DIM}{'─' * 60}{OFF}")
+                from apexis_desktop import cloud as _cloud
+                if _cloud.copy_to_clipboard(plan.handoff):
+                    print(f"  {GREEN}copied to your clipboard{OFF}")
+                print()
+
+            if routed and plan.went_online:
+                print(f"  {RED}! this answer came from the internet{OFF}")
 
             if routed:
                 bits = [f"{plan.ms/1000:.1f}s"]

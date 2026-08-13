@@ -30,6 +30,7 @@ import httpx
 from apexis_core.tier_router import TierRouter
 from apexis_shared.routing import NodeCapability, RoutingDecision, Tier
 
+from apexis_desktop import cloud
 from apexis_desktop.brain.lifecycle import ModelLifecycle
 from apexis_desktop.brain.ollama import OllamaError, OllamaProvider
 from apexis_desktop.nodes import Fleet, load_fleet
@@ -65,6 +66,12 @@ class RoutedReply:
     notices: list[str] = field(default_factory=list)
     fell_back: bool = False
 
+    # Tier 3. ``handoff`` carries a prompt for the user to paste elsewhere;
+    # nothing was sent. ``went_online`` is only ever True when a request
+    # actually left the machine.
+    handoff: str = ""
+    went_online: bool = False
+
     @property
     def tier(self) -> Tier:
         return self.decision.tier
@@ -85,7 +92,12 @@ class RoutedChat:
         unload_after: bool = True,
     ) -> None:
         self.fleet = fleet or load_fleet()
-        self.router = router or TierRouter()
+
+        # Tier 3 is only offered when the user has enabled it. "handoff"
+        # counts: it produces a prompt rather than an answer, but the routing
+        # decision is still "this is beyond the local models", and the user
+        # should be told that rather than handed a quiet phi3 guess.
+        self.router = router or TierRouter(allow_cloud=cloud.get_mode() != "off")
         self.system_prompt = system_prompt
         self.memory = memory
         self.unload_after = unload_after
@@ -111,6 +123,11 @@ class RoutedChat:
 
     def _target(self, tier: Tier) -> tuple[str, str, str]:
         """Return (model, host, human-readable machine name) for a tier."""
+        if tier is Tier.CLOUD:
+            # Reported honestly; whether anything actually goes online is
+            # decided in ask(), by cloud.handle().
+            return "cloud", "", "online"
+
         if tier is Tier.PI_LOCAL and self.fleet.pi is not None:
             return PI_MODEL, self.fleet.pi.host, "pi"
 
@@ -206,6 +223,10 @@ class RoutedChat:
 
         plan = plan or self.route(cleaned)
 
+        if plan.tier is Tier.CLOUD:
+            yield from self._run_cloud(cleaned, plan)
+            return
+
         # route(probe=True) may already have redirected this to the laptop.
         effective = Tier.LAPTOP if plan.fell_back else plan.tier
 
@@ -231,6 +252,62 @@ class RoutedChat:
         # Retried outside the except block so a second failure reports
         # cleanly rather than as "during handling of the above exception".
         yield from self._run(cleaned, plan, tier=Tier.LAPTOP)
+
+    def _run_cloud(self, message: str, plan: RoutedReply) -> Iterator[str]:
+        """Tier 3. May answer, may hand you a prompt, may decline — but never
+        pretends to have done any of them."""
+        facts = ""
+        if self.memory is not None:
+            try:
+                facts = self.memory.facts_block()
+            except Exception:
+                facts = ""
+
+        history = [(t.user, t.assistant) for t in self.history]
+
+        try:
+            result = cloud.handle(
+                message,
+                history=history,
+                facts=facts,
+                system=self.system_prompt,
+            )
+        except cloud.CloudError as exc:
+            plan.notices.append(f"Online attempt failed: {exc}")
+            plan.notices.append("Falling back to the laptop.")
+            plan.fell_back = True
+            plan.model = LAPTOP_MODEL
+            plan.host = self.fleet.laptop.host
+            plan.where = "laptop"
+            yield from self._run(message, plan, tier=Tier.LAPTOP)
+            return
+
+        plan.notices.extend(result.notices)
+        plan.went_online = result.went_online
+
+        if result.answered:
+            plan.text = result.text
+            plan.model = f"{result.provider}"
+            self.history.append(
+                Turn(message, result.text, Tier.CLOUD, result.provider)
+            )
+            yield result.text
+            return
+
+        if result.mode == "handoff":
+            plan.handoff = result.prompt
+            # Nothing was sent and nothing was answered. Say so, and still
+            # give a local attempt rather than leaving the user with nothing.
+            plan.notices.append(
+                "Nothing was sent anywhere. The prompt above is yours to "
+                "paste. Answering locally as well, for what it is worth."
+            )
+
+        plan.fell_back = True
+        plan.model = LAPTOP_MODEL
+        plan.host = self.fleet.laptop.host
+        plan.where = "laptop"
+        yield from self._run(message, plan, tier=Tier.LAPTOP)
 
     def _run(
         self, message: str, plan: RoutedReply, *, tier: Tier | None = None

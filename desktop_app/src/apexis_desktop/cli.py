@@ -27,6 +27,18 @@ def build_parser() -> argparse.ArgumentParser:
 
     commands.add_parser("chat", help="Start local chat with the Mock Brain")
 
+    cloud_parser = commands.add_parser(
+        "cloud", help="Tier 3 — what happens when a task is too hard"
+    )
+    cloud_parser.add_argument(
+        "action",
+        nargs="?",
+        default="show",
+        choices=["show", "on", "off", "handoff", "api", "key", "provider"],
+        help="show (default), on, off, handoff, api, key, provider <name>",
+    )
+    cloud_parser.add_argument("value", nargs="?", help="key or provider name")
+
     nodes_parser = commands.add_parser(
         "nodes", help="See your machines, or connect the Pi"
     )
@@ -79,6 +91,11 @@ def main() -> int:
 
     if args.command == "chat":
         return run_chat(MockProvider())
+
+    if args.command == "cloud":
+        from apexis_desktop import cloud_cli
+
+        return cloud_cli.main(args.action, args.value)
 
     if args.command == "nodes":
         from apexis_desktop import fleet_cli

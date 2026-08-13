@@ -68,9 +68,13 @@ class RoutingDecision(BaseModel):
             return None
 
         if self.tier.leaves_home:
+            # Describes the *decision*, not the action. Whether anything
+            # actually leaves the machine depends on the tier-3 mode, which
+            # the router does not know about. Announcing a network call that
+            # may never happen is how you teach someone to ignore warnings.
             return (
-                f"Going online to Claude — {self.reason}. "
-                f"This leaves your network and is being logged."
+                f"This is beyond the local models — {self.reason}. "
+                f"Tier 3 will decide how to handle it."
             )
         return f"Using {self.tier.label} — {self.reason}."
 

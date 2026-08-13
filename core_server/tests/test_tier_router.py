@@ -111,15 +111,24 @@ def test_very_complex_goes_to_cloud_when_allowed(cloud_router: TierRouter) -> No
     assert decision.tier.leaves_home is True
 
 
-def test_cloud_notice_warns_about_leaving_the_network(
+def test_cloud_notice_flags_the_task_without_promising_a_network_call(
     cloud_router: TierRouter,
 ) -> None:
+    """The router picks the tier; tier 3 decides whether anything is sent.
+
+    It used to announce "Going online to Claude ... this leaves your network"
+    at routing time, which was a lie whenever tier 3 was in handoff or off
+    mode. Warnings that are sometimes false get ignored, including the true
+    ones.
+    """
     decision = cloud_router.decide("what is the latest news on AI", laptop=LAPTOP_UP)
 
     notice = decision.notice()
     assert notice is not None
-    assert "online" in notice.lower()
-    assert "logged" in notice.lower()
+    assert "beyond the local models" in notice.lower()
+    # Must not assert an action it cannot know happened.
+    assert "leaves your network" not in notice.lower()
+    assert "claude" not in notice.lower()
 
 
 # -- live data --------------------------------------------------------------
