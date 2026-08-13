@@ -275,7 +275,7 @@ def test_stats_counts_everything(mem: Memory) -> None:
 
     stats = mem.stats()
 
-    assert stats == {"facts": 1, "messages": 2, "sessions": 2}
+    assert stats == {"facts": 1, "auto": 0, "messages": 2, "sessions": 2}
 
 
 def test_db_path_respects_env(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:

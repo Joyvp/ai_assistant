@@ -39,10 +39,15 @@ HELP = """\
     /persona <name>  switch personality
 
   \033[1mMemory\033[0m
-    /remember <fact>   remember something permanently
+    APEXIS saves facts about you as you talk. Every save is shown on
+    screen, so nothing is remembered behind your back.
+
+    /remember <fact>   remember something right now
     /facts             list what is remembered
     /forget <id>       delete one fact
     /memory            storage stats
+    /auto              is automatic saving on?
+    /auto on|off       turn automatic saving on or off
 
     /exit     quit
 """
@@ -128,7 +133,10 @@ def run_talk(
 
     _stats = memory.stats()
     if _stats["facts"]:
-        print(f"  {DIM}memory{OFF} {_stats['facts']} facts remembered")
+        _auto = "auto-saving on" if memory.auto_capture else "auto-saving off"
+        print(f"  {DIM}memory{OFF} {_stats['facts']} facts remembered, {_auto}")
+    elif memory.auto_capture:
+        print(f"  {DIM}memory{OFF} empty — it fills itself as you talk")
     print(f"  {DIM}/help for commands, /exit to quit{OFF}\n")
 
     while True:
@@ -194,8 +202,10 @@ def run_talk(
             else:
                 print()
                 for f in stored:
-                    print(f"  [{f.id}] {f.text}  {DIM}{f.when}{OFF}")
-                print()
+                    tag = f"{DIM}auto{OFF}" if f.auto else f"{DIM}told{OFF}"
+                    print(f"  [{f.id}] {f.text}  {DIM}{f.when}{OFF} {tag}")
+                print(f"\n  {DIM}auto = APEXIS noticed it; "
+                      f"remove one with /forget <id>{OFF}\n")
             continue
 
         if lowered.startswith("/forget"):
@@ -210,10 +220,27 @@ def run_talk(
 
         if lowered == "/memory":
             st = memory.stats()
-            print(f"\n  facts     {st['facts']}")
+            print(f"\n  facts     {st['facts']}  ({st['auto']} saved automatically)")
             print(f"  messages  {st['messages']}")
             print(f"  sessions  {st['sessions']}")
+            print(f"  autosave  {'on' if memory.auto_capture else 'off'}")
             print(f"  file      {memory.path}\n")
+            continue
+
+        if lowered.startswith("/auto"):
+            arg = message[len("/auto"):].strip().lower()
+            if arg in {"on", "off"}:
+                memory.auto_capture = arg == "on"
+                if arg == "on":
+                    print(f"  {DIM}automatic saving on — new facts are announced"
+                          f" as they are saved{OFF}\n")
+                else:
+                    print(f"  {DIM}automatic saving off — use /remember{OFF}\n")
+            elif not arg:
+                state = "on" if memory.auto_capture else "off"
+                print(f"  automatic saving is {BOLD}{state}{OFF}\n")
+            else:
+                print(f"  {DIM}usage: /auto on   or   /auto off{OFF}\n")
             continue
 
         if lowered.startswith("/persona"):
@@ -235,6 +262,24 @@ def run_talk(
                     print(f"  {DIM}persona -> {choice} (context cleared){OFF}\n")
             continue
 
+        # --- notice anything durable, before answering ---------------------
+        # Absorbing first means a fact mentioned in this very message is
+        # already in the system prompt when the reply is generated: say
+        # "i live in regina, whats the weather" and it knows on that turn.
+        # Announced on screen, never silent — §15 rules out invisible memory.
+        try:
+            saved = memory.absorb(message)
+        except Exception:
+            saved = []  # memory must never break the conversation
+
+        for fact in saved:
+            print(
+                f"  {DIM}· saved{OFF} {fact.text} "
+                f"{DIM}[{fact.id}] — /forget {fact.id} to undo{OFF}"
+            )
+        if saved:
+            print()
+
         # --- generate -----------------------------------------------------
         print(f"{CYAN}apexis{OFF} › ", end="", flush=True)
 
@@ -250,7 +295,6 @@ def run_talk(
 
             print("\n")
 
-            # Transcript only. Facts still require an explicit /remember.
             memory.log(session, "user", message)
             if provider._history:
                 memory.log(session, "assistant", provider._history[-1]["content"])

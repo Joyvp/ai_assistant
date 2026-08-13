@@ -10,10 +10,12 @@ Two distinct kinds of memory, deliberately kept separate:
     we just talking about?") and for review, but *not* injected wholesale;
     only the most recent turns are replayed.
 
-**No silent memory.** Master spec §15 lists "silent memory creation" as
-excluded from V1, so nothing is remembered as a fact unless you say
-``/remember``. The transcript is logged, but the model is not told to treat
-it as truth about you.
+**Never silent.** Master spec §15 excludes *silent* memory creation, not
+automatic memory creation. Facts can now be captured automatically (see
+``capture.py``), but every automatic save is announced on screen the moment
+it happens, is tagged ``source='auto'`` so it can be listed and undone
+separately, and can be switched off. The transcript is logged, but the model
+is not told to treat it as truth about you.
 
 Storage is SQLite at ``~/.local/share/apexis/memory.db`` — one file, no
 server, trivially backed up, and it moves to the Pi in Phase 5 without the
@@ -31,14 +33,15 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS facts (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     text        TEXT    NOT NULL,
     source      TEXT    NOT NULL DEFAULT 'user',
-    created_at  TEXT    NOT NULL
+    created_at  TEXT    NOT NULL,
+    slot        TEXT
 );
 
 CREATE TABLE IF NOT EXISTS messages (
@@ -81,11 +84,23 @@ class Fact:
     text: str
     source: str
     created_at: str
+    slot: str | None = None
+
+    @property
+    def auto(self) -> bool:
+        """True if APEXIS noticed this itself rather than being told."""
+        return self.source == "auto"
 
     @property
     def when(self) -> str:
         """Short human date, e.g. '2026-08-12'."""
         return self.created_at[:10]
+
+
+def _fact(row: sqlite3.Row) -> Fact:
+    return Fact(
+        row["id"], row["text"], row["source"], row["created_at"], row["slot"]
+    )
 
 
 @dataclass(frozen=True)
@@ -113,8 +128,27 @@ class Memory:
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA foreign_keys=ON")
         self._conn.executescript(SCHEMA)
+        self._migrate()
         self._conn.execute(
             "INSERT OR IGNORE INTO meta (key, value) VALUES ('schema_version', ?)",
+            (str(SCHEMA_VERSION),),
+        )
+        self._conn.commit()
+
+    def _migrate(self) -> None:
+        """Bring an older database up to the current schema, in place.
+
+        v1 databases predate the ``slot`` column. Adding it is additive and
+        keeps every existing fact, so upgrading never costs the user memory.
+        """
+        columns = {
+            row["name"] for row in self._conn.execute("PRAGMA table_info(facts)")
+        }
+        if "slot" not in columns:
+            self._conn.execute("ALTER TABLE facts ADD COLUMN slot TEXT")
+        self._conn.execute(
+            "INSERT INTO meta (key, value) VALUES ('schema_version', ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
             (str(SCHEMA_VERSION),),
         )
         self._conn.commit()
@@ -141,26 +175,36 @@ class Memory:
 
     # -- facts -------------------------------------------------------------
 
-    def remember(self, text: str, *, source: str = "user") -> Fact:
-        """Store a fact. Raises ValueError on empty input."""
+    def remember(
+        self, text: str, *, source: str = "user", slot: str | None = None
+    ) -> Fact:
+        """Store a fact. Raises ValueError on empty input.
+
+        A ``slot`` marks the fact as singular — you have one name and one
+        home — so storing a new fact in an occupied slot replaces what was
+        there instead of piling up contradictions.
+        """
         cleaned = text.strip()
         if not cleaned:
             raise ValueError("cannot remember an empty fact")
 
         created = _now()
         with self._write() as conn:
+            if slot:
+                conn.execute("DELETE FROM facts WHERE slot = ?", (slot,))
             cursor = conn.execute(
-                "INSERT INTO facts (text, source, created_at) VALUES (?, ?, ?)",
-                (cleaned, source, created),
+                "INSERT INTO facts (text, source, created_at, slot) "
+                "VALUES (?, ?, ?, ?)",
+                (cleaned, source, created, slot),
             )
-        return Fact(cursor.lastrowid, cleaned, source, created)
+        return Fact(cursor.lastrowid, cleaned, source, created, slot)
 
     def facts(self) -> list[Fact]:
         """All remembered facts, oldest first."""
         rows = self._conn.execute(
-            "SELECT id, text, source, created_at FROM facts ORDER BY id"
+            "SELECT id, text, source, created_at, slot FROM facts ORDER BY id"
         ).fetchall()
-        return [Fact(r["id"], r["text"], r["source"], r["created_at"]) for r in rows]
+        return [_fact(r) for r in rows]
 
     def forget(self, fact_id: int) -> bool:
         """Delete one fact. Returns False if it did not exist."""
@@ -174,15 +218,69 @@ class Memory:
             cursor = conn.execute("DELETE FROM facts")
         return cursor.rowcount
 
+    def has_fact(self, text: str) -> bool:
+        """True if this exact fact is already stored (case-insensitive)."""
+        row = self._conn.execute(
+            "SELECT 1 FROM facts WHERE lower(text) = ? LIMIT 1",
+            (text.strip().lower(),),
+        ).fetchone()
+        return row is not None
+
+    def absorb(self, message: str) -> list[Fact]:
+        """Notice and store any durable facts in something the user said.
+
+        Returns the facts that were actually stored — usually none. Callers
+        must announce whatever comes back; automatic memory that the user
+        cannot see is exactly what §15 rules out.
+        """
+        if not self.auto_capture:
+            return []
+
+        from apexis_desktop import capture
+
+        stored: list[Fact] = []
+        for candidate in capture.extract(message):
+            if self.has_fact(candidate.text):
+                continue
+            stored.append(
+                self.remember(candidate.text, source="auto", slot=candidate.key)
+            )
+        return stored
+
+    # -- settings ----------------------------------------------------------
+
+    def get_setting(self, key: str, default: str = "") -> str:
+        row = self._conn.execute(
+            "SELECT value FROM meta WHERE key = ?", (key,)
+        ).fetchone()
+        return row["value"] if row else default
+
+    def set_setting(self, key: str, value: str) -> None:
+        with self._write() as conn:
+            conn.execute(
+                "INSERT INTO meta (key, value) VALUES (?, ?) "
+                "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                (key, value),
+            )
+
+    @property
+    def auto_capture(self) -> bool:
+        """Whether APEXIS saves facts without being asked. On by default."""
+        return self.get_setting("auto_capture", "on") == "on"
+
+    @auto_capture.setter
+    def auto_capture(self, enabled: bool) -> None:
+        self.set_setting("auto_capture", "on" if enabled else "off")
+
     def search_facts(self, term: str) -> list[Fact]:
         """Case-insensitive substring search over facts."""
         needle = f"%{term.strip().lower()}%"
         rows = self._conn.execute(
-            "SELECT id, text, source, created_at FROM facts "
+            "SELECT id, text, source, created_at, slot FROM facts "
             "WHERE lower(text) LIKE ? ORDER BY id",
             (needle,),
         ).fetchall()
-        return [Fact(r["id"], r["text"], r["source"], r["created_at"]) for r in rows]
+        return [_fact(r) for r in rows]
 
     # -- transcript --------------------------------------------------------
 
@@ -264,4 +362,12 @@ class Memory:
         sessions = self._conn.execute(
             "SELECT COUNT(DISTINCT session) AS n FROM messages"
         ).fetchone()["n"]
-        return {"facts": facts, "messages": msgs, "sessions": sessions}
+        auto = self._conn.execute(
+            "SELECT COUNT(*) AS n FROM facts WHERE source = 'auto'"
+        ).fetchone()["n"]
+        return {
+            "facts": facts,
+            "auto": auto,
+            "messages": msgs,
+            "sessions": sessions,
+        }
