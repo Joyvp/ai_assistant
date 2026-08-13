@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ipaddress
 import json
 
 import httpx
@@ -480,3 +481,84 @@ def test_the_default_lifecycle_follows_the_configured_laptop_address():
     fleet = Fleet(laptop=Node("laptop", "127.0.0.1:9999", role="laptop"))
     orch = Orchestrator(fleet=fleet, provider_factory=FakeProvider)
     assert orch.lifecycle.host == "http://127.0.0.1:9999"
+
+
+# -- telling "wrong name" apart from "nothing listening" -------------------
+
+
+def test_an_ip_resolves_to_itself():
+    from apexis_desktop.nodes import resolves
+
+    assert resolves("192.168.1.50") == "192.168.1.50"
+
+
+def test_a_nonsense_hostname_does_not_resolve():
+    from apexis_desktop.nodes import resolves
+
+    assert resolves("definitely-not-a-real-host-xyzzy") is None
+
+
+def test_an_empty_hostname_does_not_resolve():
+    from apexis_desktop.nodes import resolves
+
+    assert resolves("") is None
+
+
+def test_local_subnets_are_private_and_look_like_prefixes():
+    from apexis_desktop.nodes import local_subnets
+
+    for prefix in local_subnets():
+        assert prefix.count(".") == 2
+        # Must never hand back something that would scan the internet.
+        assert ipaddress.ip_address(f"{prefix}.1").is_private
+
+
+def test_scan_only_reports_hosts_that_speak_ollama(monkeypatch):
+    from apexis_desktop import nodes as nodes_module
+
+    opened = {"192.168.9.7"}
+
+    class FakeSocket:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    def fake_create_connection(addr, timeout=None):
+        if addr[0] in opened:
+            return FakeSocket()
+        raise OSError("refused")
+
+    monkeypatch.setattr(
+        nodes_module.socket, "create_connection", fake_create_connection
+    )
+    monkeypatch.setattr(
+        nodes_module.Node, "_tags", lambda self, client=None: ["llama3.2:1b"]
+    )
+
+    found = nodes_module.scan(["192.168.9"], timeout=0.01, workers=8)
+    assert found == [("192.168.9.7", ["llama3.2:1b"])]
+
+
+def test_scan_skips_an_open_port_that_is_not_ollama(monkeypatch):
+    from apexis_desktop import nodes as nodes_module
+
+    class FakeSocket:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    monkeypatch.setattr(
+        nodes_module.socket,
+        "create_connection",
+        lambda addr, timeout=None: (
+            FakeSocket() if addr[0] == "192.168.9.7" else (_ for _ in ()).throw(OSError())
+        ),
+    )
+    # Port open, but it is some other service.
+    monkeypatch.setattr(nodes_module.Node, "_tags", lambda self, client=None: None)
+
+    assert nodes_module.scan(["192.168.9"], timeout=0.01, workers=8) == []

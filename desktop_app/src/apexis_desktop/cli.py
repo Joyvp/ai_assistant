@@ -34,8 +34,8 @@ def build_parser() -> argparse.ArgumentParser:
         "action",
         nargs="?",
         default="show",
-        choices=["show", "connect", "disconnect", "ping"],
-        help="show (default), connect <address>, disconnect, ping",
+        choices=["show", "find", "connect", "disconnect", "ping"],
+        help="show (default), find, connect <address>, disconnect, ping",
     )
     nodes_parser.add_argument(
         "address",

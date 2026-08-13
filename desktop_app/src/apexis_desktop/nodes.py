@@ -44,6 +44,65 @@ class NodeError(RuntimeError):
     """Raised when a node is misconfigured — not when it is merely down."""
 
 
+def resolves(host: str) -> str | None:
+    """Return the IP a hostname points at, or None if the name is unknown.
+
+    Worth separating from "is it up": a name that does not resolve is a
+    different problem with a different fix than a machine that is switched
+    off, and telling the two apart saves a lot of confused poking.
+    """
+    if not host:
+        return None
+    try:
+        ipaddress.ip_address(host)
+        return host
+    except ValueError:
+        pass
+    try:
+        return socket.gethostbyname(host)
+    except OSError:
+        return None
+
+
+def local_subnets() -> list[str]:
+    """The /24 prefixes this machine is on, e.g. ['192.168.1'].
+
+    Used to scan for a Pi when the user does not know its address. Derived
+    from this machine's own interfaces, so the scan never leaves the LAN.
+    """
+    found: list[str] = []
+    try:
+        hostname = socket.gethostname()
+        candidates = {info[4][0] for info in socket.getaddrinfo(hostname, None)}
+    except OSError:
+        candidates = set()
+
+    # A UDP socket to a public address reveals the preferred outbound
+    # interface without sending a single packet.
+    try:
+        probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            probe.connect(("8.8.8.8", 80))
+            candidates.add(probe.getsockname()[0])
+        finally:
+            probe.close()
+    except OSError:
+        pass
+
+    for raw in candidates:
+        try:
+            address = ipaddress.ip_address(raw)
+        except ValueError:
+            continue
+        if address.version != 4 or address.is_loopback or not address.is_private:
+            continue
+        prefix = ".".join(raw.split(".")[:3])
+        if prefix not in found:
+            found.append(prefix)
+
+    return found
+
+
 def _is_private(host: str) -> bool:
     """True if ``host`` is a LAN address, loopback, or a .local name.
 
@@ -154,6 +213,45 @@ class Node:
             return f"{self.name:<8} {self.host:<28} offline"
         listed = ", ".join(models) if models else "no models installed"
         return f"{self.name:<8} {self.host:<28} up · {listed}"
+
+
+def scan(
+    prefixes: list[str] | None = None,
+    *,
+    port: int = DEFAULT_PI_PORT,
+    timeout: float = 0.35,
+    workers: int = 64,
+) -> list[tuple[str, list[str]]]:
+    """Find machines on the LAN running Ollama.
+
+    Returns ``(address, models)`` for every host that answers. Checks the
+    TCP port first and only makes an HTTP request to the few that are open,
+    so a /24 sweep takes a couple of seconds rather than minutes.
+
+    Strictly local: prefixes come from this machine's own interfaces.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+
+    prefixes = prefixes or local_subnets()
+    targets = [f"{prefix}.{n}" for prefix in prefixes for n in range(1, 255)]
+
+    def port_open(ip: str) -> str | None:
+        try:
+            with socket.create_connection((ip, port), timeout=timeout):
+                return ip
+        except OSError:
+            return None
+
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        open_hosts = [ip for ip in pool.map(port_open, targets) if ip]
+
+    found: list[tuple[str, list[str]]] = []
+    for ip in open_hosts:
+        models = Node("candidate", f"{ip}:{port}")._tags()
+        if models is not None:
+            found.append((ip, models))
+
+    return found
 
 
 @dataclass
