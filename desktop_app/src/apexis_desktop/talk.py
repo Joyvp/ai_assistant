@@ -13,6 +13,9 @@ from datetime import datetime
 from apexis_desktop import personality
 from apexis_desktop.memory import Memory
 from apexis_desktop.brain.ollama import OllamaError, OllamaProvider
+from apexis_desktop.nodes import load_fleet
+from apexis_desktop.routed_chat import RoutedChat
+from apexis_shared.routing import Tier
 
 
 BANNER = """\
@@ -37,6 +40,12 @@ HELP = """\
     /context  how many messages are in context
     /persona  list personalities
     /persona <name>  switch personality
+
+  \033[1mRouting\033[0m
+    /nodes    which machines are up
+    /route <task>    where would this go? (does not run it)
+    /why      explain the last routing decision
+    /direct   turn routing off — always use phi3
 
   \033[1mMemory\033[0m
     APEXIS saves facts about you as you talk. Every save is shown on
@@ -108,6 +117,7 @@ def run_talk(
     persona: str | None = None,
     memory: Memory | None = None,
     session: str | None = None,
+    routed: bool = True,
 ) -> int:
     """Run the streaming chat loop. Returns a process exit code."""
     provider = provider or OllamaProvider()
@@ -127,7 +137,19 @@ def run_talk(
 
     current_persona = persona or os.getenv("APEXIS_PERSONA") or personality.DEFAULT_PERSONA
 
-    print(f"  {DIM}model{OFF}  {provider.model}")
+    fleet = load_fleet()
+    chat = RoutedChat(
+        fleet=fleet,
+        system_prompt=personality.get(current_persona),
+        memory=memory,
+    )
+    last: object | None = None  # most recent RoutedReply, for /why
+
+    if routed:
+        pi = f"pi {fleet.pi.host}" if fleet.pi else "no pi — laptop only"
+        print(f"  {DIM}routing{OFF} on · {pi}")
+    else:
+        print(f"  {DIM}model{OFF}  {provider.model}")
     print(f"  {DIM}host {OFF}  {provider.host}")
     print(f"  {DIM}style{OFF}  {current_persona}")
 
@@ -165,6 +187,7 @@ def run_talk(
 
         if lowered == "/new":
             provider.reset()
+            chat.reset()
             print(f"  {DIM}context cleared.{OFF}\n")
             continue
 
@@ -183,7 +206,56 @@ def run_talk(
             continue
 
         if lowered == "/context":
-            print(f"  {provider.turns} messages in context\n")
+            turns = chat.turns if routed else provider.turns
+            print(f"  {turns} messages in context\n")
+            continue
+
+        if lowered == "/nodes":
+            from apexis_desktop import fleet_cli
+
+            fleet_cli.show(fleet)
+            continue
+
+        if lowered == "/direct":
+            routed = not routed
+            if routed:
+                print(f"  {DIM}routing on — tasks go to the cheapest machine{OFF}\n")
+            else:
+                print(f"  {DIM}routing off — everything goes to "
+                      f"{provider.model}{OFF}\n")
+            continue
+
+        if lowered.startswith("/route"):
+            task = message[len("/route"):].strip()
+            if not task:
+                print(f"  {DIM}usage: /route build me a website{OFF}\n")
+            else:
+                plan = chat.route(task)
+                d = plan.decision
+                print(f"\n  would go to  {BOLD}{d.tier.label}{OFF}")
+                print(f"  model        {plan.model} on the {plan.where}")
+                print(f"  score        {d.complexity}")
+                print(f"  because      {d.reason}")
+                if d.signals:
+                    print(f"  signals      {', '.join(d.signals)}")
+                print()
+            continue
+
+        if lowered == "/why":
+            if last is None:
+                print(f"  {DIM}nothing routed yet{OFF}\n")
+            else:
+                d = last.decision
+                print(f"\n  went to  {BOLD}{d.tier.label}{OFF}")
+                print(f"  model    {last.model} on the {last.where}")
+                print(f"  score    {d.complexity}")
+                print(f"  because  {d.reason}")
+                if d.signals:
+                    print(f"  signals  {', '.join(d.signals)}")
+                print(f"  took     {last.ms/1000:.1f}s")
+                if last.freed_mb:
+                    print(f"  freed    {last.freed_mb}MB")
+                print()
             continue
 
         if lowered.startswith("/remember"):
@@ -257,8 +329,10 @@ def run_talk(
                     print(f"  {YELLOW}no persona {choice!r}{OFF}\n")
                 else:
                     provider.system_prompt = personality.get(choice)
+                    chat.system_prompt = personality.get(choice)
                     current_persona = choice
                     provider.reset()
+                    chat.reset()
                     print(f"  {DIM}persona -> {choice} (context cleared){OFF}\n")
             continue
 
@@ -281,11 +355,30 @@ def run_talk(
             print()
 
         # --- generate -----------------------------------------------------
-        print(f"{CYAN}apexis{OFF} › ", end="", flush=True)
-
         try:
+            if routed:
+                plan = chat.route(message, probe=True)
+                last = plan
+
+                # Show the destination before the reply, so a pause has a
+                # visible reason: loading a 2.2GB model takes a few seconds.
+                icon = "▸" if plan.tier is Tier.PI_LOCAL else "▲"
+                colour = GREEN if plan.tier is Tier.PI_LOCAL else YELLOW
+                print(
+                    f"  {colour}{icon}{OFF} {DIM}{plan.where} · {plan.model}"
+                    f" · score {plan.decision.complexity}{OFF}",
+                    flush=True,
+                )
+                shown = len(plan.notices)
+                for note in plan.notices:
+                    marker = f"{RED}!{OFF}" if plan.tier.leaves_home else f"{DIM}·{OFF}"
+                    print(f"  {marker} {DIM}{note}{OFF}")
+
+            print(f"{CYAN}apexis{OFF} › ", end="", flush=True)
+
             got_output = False
-            for chunk in provider.stream(message):
+            stream = chat.ask(message, plan) if routed else provider.stream(message)
+            for chunk in stream:
                 sys.stdout.write(chunk)
                 sys.stdout.flush()
                 got_output = True
@@ -293,10 +386,25 @@ def run_talk(
             if not got_output:
                 print(f"{DIM}(no response){OFF}", end="")
 
-            print("\n")
+            print()
+
+            if routed:
+                bits = [f"{plan.ms/1000:.1f}s"]
+                if plan.freed_mb:
+                    bits.append(f"{plan.freed_mb}MB freed")
+                if plan.fell_back:
+                    bits.append("fell back")
+                print(f"  {DIM}{' · '.join(bits)}{OFF}")
+                # Only notices added *during* the run — anything printed
+                # before generation is not repeated.
+                for note in plan.notices[shown:]:
+                    print(f"  {DIM}{note}{OFF}")
+            print()
 
             memory.log(session, "user", message)
-            if provider._history:
+            if routed and chat.history:
+                memory.log(session, "assistant", chat.history[-1].assistant)
+            elif not routed and provider._history:
                 memory.log(session, "assistant", provider._history[-1]["content"])
 
         except OllamaError as exc:

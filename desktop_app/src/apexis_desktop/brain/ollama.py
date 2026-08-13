@@ -149,6 +149,25 @@ class OllamaProvider:
             {"role": "user", "content": message},
         ]
 
+    def stream_messages(self, messages: list[dict[str, str]]) -> Iterator[str]:
+        """Stream a reply to a caller-supplied message list.
+
+        ``stream`` owns its own history, which is right for a single-model
+        chat. The router needs the opposite: one conversation replayed across
+        several machines, so the history lives in the caller and is passed in
+        whole. Nothing is appended to ``_history`` here.
+        """
+        if not messages:
+            raise ValueError("messages cannot be empty")
+
+        payload = {
+            "model": self.model,
+            "messages": messages,
+            "stream": True,
+            "keep_alive": self.keep_alive,
+        }
+        yield from self._stream_payload(payload)
+
     def stream(self, message: str) -> Iterator[str]:
         """Yield response chunks as the model produces them.
 
@@ -168,6 +187,17 @@ class OllamaProvider:
 
         collected: list[str] = []
 
+        for piece in self._stream_payload(payload):
+            collected.append(piece)
+            yield piece
+
+        reply = "".join(collected).strip()
+        if reply:
+            self._history.append({"role": "user", "content": cleaned})
+            self._history.append({"role": "assistant", "content": reply})
+
+    def _stream_payload(self, payload: dict) -> Iterator[str]:
+        """Send one /api/chat request and yield its content chunks."""
         try:
             with self.client.stream(
                 "POST", f"{self.host}/api/chat", json=payload
@@ -189,7 +219,6 @@ class OllamaProvider:
 
                     piece = chunk.get("message", {}).get("content", "")
                     if piece:
-                        collected.append(piece)
                         yield piece
 
                     if chunk.get("done"):
@@ -202,11 +231,6 @@ class OllamaProvider:
             ) from exc
         except httpx.HTTPError as exc:
             raise OllamaError(f"request failed: {exc}") from exc
-
-        reply = "".join(collected).strip()
-        if reply:
-            self._history.append({"role": "user", "content": cleaned})
-            self._history.append({"role": "assistant", "content": reply})
 
     def respond(self, message: str) -> str:
         """Return the complete response as a single string.
