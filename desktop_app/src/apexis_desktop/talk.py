@@ -232,7 +232,10 @@ def run_talk(
             else:
                 plan = chat.route(task)
                 d = plan.decision
-                print(f"\n  would go to  {BOLD}{d.tier.label}{OFF}")
+                tier_name = d.tier.label
+                if d.tier is Tier.PI_LOCAL and plan.where == "laptop":
+                    tier_name = "cheap tier (no Pi — served here)"
+                print(f"\n  would go to  {BOLD}{tier_name}{OFF}")
                 print(f"  model        {plan.model} on the {plan.where}")
                 print(f"  score        {d.complexity}")
                 print(f"  because      {d.reason}")
@@ -246,7 +249,12 @@ def run_talk(
                 print(f"  {DIM}nothing routed yet{OFF}\n")
             else:
                 d = last.decision
-                print(f"\n  went to  {BOLD}{d.tier.label}{OFF}")
+                tier_name = d.tier.label
+                if d.tier is Tier.PI_LOCAL and last.where == "laptop":
+                    # Honest about what actually happened: the cheap tier was
+                    # chosen, but there is no Pi, so this laptop served it.
+                    tier_name = "cheap tier (no Pi — served here)"
+                print(f"\n  went to  {BOLD}{tier_name}{OFF}")
                 print(f"  model    {last.model} on the {last.where}")
                 print(f"  score    {d.complexity}")
                 print(f"  because  {d.reason}")
