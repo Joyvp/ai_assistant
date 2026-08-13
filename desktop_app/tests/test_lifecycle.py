@@ -264,7 +264,7 @@ def test_simple_task_uses_pi_model() -> None:
 
     orch = Orchestrator(
         lifecycle=_fake_lifecycle(),
-        provider_factory=factory,
+        provider_factory=lambda m, h: factory(m),
     )
     result = orch.handle("hey", laptop=LAPTOP_UP)
 
@@ -282,7 +282,7 @@ def test_complex_task_uses_laptop_model() -> None:
 
     orch = Orchestrator(
         lifecycle=_fake_lifecycle(),
-        provider_factory=factory,
+        provider_factory=lambda m, h: factory(m),
     )
     result = orch.handle("build me a react website with typescript", laptop=LAPTOP_UP)
 
@@ -299,7 +299,7 @@ def test_provider_is_always_closed() -> None:
         created.append(p)
         return p
 
-    orch = Orchestrator(lifecycle=_fake_lifecycle(), provider_factory=factory)
+    orch = Orchestrator(lifecycle=_fake_lifecycle(), provider_factory=lambda m, h: factory(m))
     orch.handle("hey", laptop=LAPTOP_UP)
 
     assert all(p.closed for p in created)
@@ -309,7 +309,7 @@ def test_cloud_without_handler_falls_back_and_says_so() -> None:
     orch = Orchestrator(
         router=TierRouter(allow_cloud=True),
         lifecycle=_fake_lifecycle(),
-        provider_factory=lambda m: FakeProvider(m),
+        provider_factory=lambda m, h: FakeProvider(m),
         cloud_handler=None,
     )
     result = orch.handle("what is the latest news about AI", laptop=LAPTOP_UP)
@@ -322,7 +322,7 @@ def test_cloud_handler_is_used_when_present() -> None:
     orch = Orchestrator(
         router=TierRouter(allow_cloud=True),
         lifecycle=_fake_lifecycle(),
-        provider_factory=lambda m: FakeProvider(m),
+        provider_factory=lambda m, h: FakeProvider(m),
         cloud_handler=lambda task: "cloud says hello",
     )
     result = orch.handle("what is the latest news about AI", laptop=LAPTOP_UP)
@@ -337,7 +337,7 @@ def test_going_online_is_always_announced() -> None:
     orch = Orchestrator(
         router=TierRouter(allow_cloud=True),
         lifecycle=_fake_lifecycle(),
-        provider_factory=lambda m: FakeProvider(m),
+        provider_factory=lambda m, h: FakeProvider(m),
         cloud_handler=lambda t: "x",
     )
     result = orch.handle("search the web for python tutorials", laptop=LAPTOP_UP)
@@ -356,7 +356,7 @@ def test_empty_task_rejected() -> None:
 def test_record_captures_the_attempt() -> None:
     orch = Orchestrator(
         lifecycle=_fake_lifecycle(),
-        provider_factory=lambda m: FakeProvider(m),
+        provider_factory=lambda m, h: FakeProvider(m),
     )
     result = orch.handle("hey", laptop=LAPTOP_UP)
 
@@ -370,7 +370,7 @@ def test_explain_is_a_dry_run() -> None:
 
     orch = Orchestrator(
         lifecycle=_fake_lifecycle(),
-        provider_factory=lambda m: (used.append(m), FakeProvider(m))[1],
+        provider_factory=lambda m, h: (used.append(m), FakeProvider(m))[1],
     )
     text = orch.explain("build me a react website", laptop=LAPTOP_UP)
 
@@ -382,7 +382,7 @@ def test_explain_is_a_dry_run() -> None:
 def test_summary_is_human_readable() -> None:
     orch = Orchestrator(
         lifecycle=_fake_lifecycle(),
-        provider_factory=lambda m: FakeProvider(m),
+        provider_factory=lambda m, h: FakeProvider(m),
     )
     result = orch.handle("hey", laptop=LAPTOP_UP)
 

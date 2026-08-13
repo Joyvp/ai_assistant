@@ -27,6 +27,22 @@ def build_parser() -> argparse.ArgumentParser:
 
     commands.add_parser("chat", help="Start local chat with the Mock Brain")
 
+    nodes_parser = commands.add_parser(
+        "nodes", help="See your machines, or connect the Pi"
+    )
+    nodes_parser.add_argument(
+        "action",
+        nargs="?",
+        default="show",
+        choices=["show", "connect", "disconnect", "ping"],
+        help="show (default), connect <address>, disconnect, ping",
+    )
+    nodes_parser.add_argument(
+        "address",
+        nargs="?",
+        help="Pi address, e.g. 192.168.1.50 or apexis-pi.local",
+    )
+
     talk_parser = commands.add_parser(
         "talk", help="Talk to the real local model (Ollama)"
     )
@@ -63,6 +79,11 @@ def main() -> int:
 
     if args.command == "chat":
         return run_chat(MockProvider())
+
+    if args.command == "nodes":
+        from apexis_desktop import fleet_cli
+
+        return fleet_cli.main(args.action, args.address)
 
     if args.command == "talk":
         # Imported lazily so `apexis status` does not pay for it.
