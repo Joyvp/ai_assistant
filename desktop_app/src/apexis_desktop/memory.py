@@ -146,12 +146,32 @@ class Memory:
         }
         if "slot" not in columns:
             self._conn.execute("ALTER TABLE facts ADD COLUMN slot TEXT")
+            self._backfill_slots()
         self._conn.execute(
             "INSERT INTO meta (key, value) VALUES ('schema_version', ?) "
             "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
             (str(SCHEMA_VERSION),),
         )
         self._conn.commit()
+
+    def _backfill_slots(self) -> None:
+        """Work out which existing facts occupy an identity slot.
+
+        Without this, a fact stored before slots existed ("I live in
+        Saskatoon") would never be replaced when the user moves, leaving two
+        contradictory homes in the prompt. Each old fact is run back through
+        the capture rules; if it looks like a slotted fact, it gets the slot.
+        """
+        from apexis_desktop import capture
+
+        rows = self._conn.execute("SELECT id, text FROM facts").fetchall()
+        for row in rows:
+            candidates = capture.extract(row["text"])
+            if candidates and candidates[0].key:
+                self._conn.execute(
+                    "UPDATE facts SET slot = ? WHERE id = ?",
+                    (candidates[0].key, row["id"]),
+                )
 
     # -- lifecycle ---------------------------------------------------------
 

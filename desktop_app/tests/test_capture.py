@@ -325,3 +325,39 @@ def test_a_v1_database_upgrades_without_losing_facts(tmp_path):
         # And the new column works.
         m.absorb("i moved to regina")
         assert "I live in Regina" in [f.text for f in m.facts()]
+
+
+def test_migration_backfills_slots_on_old_facts(tmp_path):
+    """A fact stored before slots existed must still be replaceable.
+
+    Otherwise moving city leaves two contradictory homes in the prompt.
+    """
+    import sqlite3
+
+    path = tmp_path / "old.db"
+    conn = sqlite3.connect(path)
+    conn.executescript(
+        """
+        CREATE TABLE facts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            text TEXT NOT NULL,
+            source TEXT NOT NULL DEFAULT 'user',
+            created_at TEXT NOT NULL
+        );
+        CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+        INSERT INTO facts (text, source, created_at)
+            VALUES ('I live in Saskatoon', 'user', '2026-08-01T00:00:00+00:00');
+        INSERT INTO facts (text, source, created_at)
+            VALUES ('I like coffee', 'user', '2026-08-01T00:00:00+00:00');
+        """
+    )
+    conn.commit()
+    conn.close()
+
+    with Memory(path) as m:
+        slots = {f.text: f.slot for f in m.facts()}
+        assert slots["I live in Saskatoon"] == "location"
+        assert slots["I like coffee"] is None
+
+        m.absorb("i moved to regina")
+        assert [f.text for f in m.facts()] == ["I like coffee", "I live in Regina"]
