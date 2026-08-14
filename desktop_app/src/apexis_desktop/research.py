@@ -20,6 +20,7 @@ from datetime import datetime, timezone
 from apexis_shared.jobs import Job, JobState
 from apexis_shared.prepare import prepare
 
+from apexis_desktop import away, mail
 from apexis_desktop.brain.ollama import OllamaError, OllamaProvider
 from apexis_desktop.brain.lifecycle import ModelLifecycle
 from apexis_desktop.nodes import load_fleet
@@ -179,7 +180,27 @@ def answer(job: Job) -> int:
             print(f"    {DIM}· {source.title or source.url}{OFF}")
     state = "left loaded" if already_up else "unloaded"
     print(f"  {DIM}job {job.id} · {LAPTOP_MODEL} {state}{OFF}\n")
+
+    _report_if_away(job)
     return 0
+
+
+def _report_if_away(job) -> None:
+    """Email the answer, but only if the user said they were out.
+
+    A machine that emails you while you are looking at it is spam, so the
+    user's own away switch is the gate. Failure here is silent by design:
+    a notification must never be able to break the job it describes.
+    """
+    if not away.is_away():
+        return
+
+    subject, body = mail.job_report(job)
+    if mail.notify(subject, body):
+        print(f"  {DIM}you're away — emailed to {mail.owner()}{OFF}\n")
+    else:
+        print(f"  {YELLOW}you're away, but email isn't set up{OFF}")
+        print(f"  {DIM}apexis email setup{OFF}\n")
 
 
 def show_list() -> int:

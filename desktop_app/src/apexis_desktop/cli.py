@@ -27,6 +27,26 @@ def build_parser() -> argparse.ArgumentParser:
 
     commands.add_parser("chat", help="Start local chat with the Mock Brain")
 
+    away_parser = commands.add_parser(
+        "away", help="Tell APEXIS you're going out (it may email you)"
+    )
+    away_parser.add_argument("note", nargs="*", help="optional: where you're going")
+
+    commands.add_parser("home", help="Tell APEXIS you're back")
+
+    email_parser = commands.add_parser(
+        "email", help="How APEXIS reaches you when you're out"
+    )
+    email_parser.add_argument(
+        "action",
+        nargs="?",
+        default="show",
+        choices=["show", "setup", "test", "outbox", "from", "password", "to",
+                 "approve", "drop"],
+        help="what to do",
+    )
+    email_parser.add_argument("value", nargs="?", help="the value to set")
+
     research_parser = commands.add_parser(
         "research",
         help="Ask a question about some web pages — gather, then think once",
@@ -104,6 +124,21 @@ def main() -> int:
 
     if args.command == "chat":
         return run_chat(MockProvider())
+
+    if args.command == "away":
+        from apexis_desktop import mail_cli
+
+        return mail_cli.go_away(" ".join(args.note))
+
+    if args.command == "home":
+        from apexis_desktop import mail_cli
+
+        return mail_cli.come_home()
+
+    if args.command == "email":
+        from apexis_desktop import mail_cli
+
+        return mail_cli.main(args.action, args.value)
 
     if args.command == "research":
         from apexis_desktop import research
