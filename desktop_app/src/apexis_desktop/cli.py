@@ -27,6 +27,23 @@ def build_parser() -> argparse.ArgumentParser:
 
     commands.add_parser("chat", help="Start local chat with the Mock Brain")
 
+    later_parser = commands.add_parser(
+        "later", help="Queue a question to be answered while you're out"
+    )
+    later_parser.add_argument("words", nargs="*", help="the question and any links")
+
+    watch_parser = commands.add_parser(
+        "watch", help="Work through the queue"
+    )
+    watch_parser.add_argument(
+        "--once", action="store_true", help="drain once and exit"
+    )
+    watch_parser.add_argument(
+        "--interval", type=int, default=60, help="seconds between checks"
+    )
+
+    commands.add_parser("queue", help="What's waiting to be worked on")
+
     away_parser = commands.add_parser(
         "away", help="Tell APEXIS you're going out (it may email you)"
     )
@@ -126,6 +143,22 @@ def main() -> int:
 
     if args.command == "chat":
         return run_chat(MockProvider())
+
+    if args.command == "later":
+        from apexis_desktop import research, worker
+
+        question, urls = research.split_question(args.words)
+        return worker.later(question, urls)
+
+    if args.command == "watch":
+        from apexis_desktop import worker
+
+        return worker.watch(args.interval, once=args.once)
+
+    if args.command == "queue":
+        from apexis_desktop import worker
+
+        return worker.show_queue()
 
     if args.command == "away":
         from apexis_desktop import mail_cli
