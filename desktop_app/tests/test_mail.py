@@ -485,3 +485,56 @@ def test_try_send_is_empty_on_success(configured, monkeypatch):
     monkeypatch.setattr(mail, "_deliver", lambda *a, **k: None)
 
     assert mail.try_send("joy@example.com", "s", "b") == ""
+
+
+# -- checking the stored credentials without revealing them ----------------
+
+
+def test_check_never_prints_the_password(configured, capsys):
+    mail_cli.check()
+    assert "abcdefghijklmnop" not in capsys.readouterr().out
+
+
+def test_check_accepts_a_well_formed_app_password(configured, capsys):
+    assert mail_cli.check() == 0
+    assert "16 characters" in capsys.readouterr().out
+
+
+def test_check_flags_the_wrong_length(configured, capsys):
+    mail.set_setting("password", "tooshort")
+
+    assert mail_cli.check() == 1
+    assert "8 characters" in capsys.readouterr().out
+
+
+def test_check_names_stray_punctuation(configured, capsys):
+    """A copy-paste can bring a smart quote or a dash along with it."""
+    mail.set_setting("password", "abcd-efgh-ijkl-mn")
+
+    mail_cli.check()
+
+    assert "letters only" in capsys.readouterr().out
+
+
+def test_check_suggests_the_wrong_account_when_the_shape_is_fine(
+    configured, capsys
+):
+    mail_cli.check()
+    out = capsys.readouterr().out
+
+    assert "different Google account" in out
+    assert "apexis.bot@gmail.com" in out
+
+
+def test_check_reports_a_missing_password(capsys):
+    mail.set_setting("sender", "a@b.com")
+
+    assert mail_cli.check() == 1
+    assert "not set" in capsys.readouterr().out
+
+
+def test_check_is_reachable_from_the_parser():
+    from apexis_desktop.cli import build_parser
+
+    args = build_parser().parse_args(["email", "check"])
+    assert args.action == "check"

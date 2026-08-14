@@ -193,6 +193,61 @@ def test() -> int:
     return 1
 
 
+def check() -> int:
+    """Inspect what is stored, without printing the secret.
+
+    A password can be wrong in ways that look identical on screen: an extra
+    space, a missing character, a smart quote from a copy-paste. Length and
+    character class catch all of those without ever showing it.
+    """
+    print()
+    print(f"  {BOLD}What APEXIS has stored{OFF}")
+    print()
+
+    sender = mail.sender()
+    owner = mail.owner()
+    secret = mail.password()
+
+    print(f"  sends from   {sender or DIM + '(not set)' + OFF}")
+    print(f"  writes to    {owner or DIM + '(not set)' + OFF}")
+    print()
+
+    if not secret:
+        print(f"  password     {RED}not set{OFF}")
+        print()
+        return 1
+
+    length = len(secret)
+    ok = length == 16 and secret.isalnum() and secret.islower()
+
+    mark = f"{GREEN}✓{OFF}" if length == 16 else f"{RED}✗{OFF}"
+    print(f"  password     {mark} {length} characters "
+          f"{DIM}(a Google App Password is exactly 16){OFF}")
+
+    if not secret.isalnum():
+        odd = sorted({c for c in secret if not c.isalnum()})
+        shown = " ".join(repr(c) for c in odd)
+        print(f"               {RED}✗{OFF} contains {shown} "
+              f"{DIM}— app passwords are letters only{OFF}")
+    elif not secret.islower():
+        print(f"               {YELLOW}!{OFF} has capitals "
+              f"{DIM}— Google issues them lowercase{OFF}")
+
+    print()
+    if ok:
+        print(f"  {DIM}The password looks right, so the likely problem is that{OFF}")
+        print(f"  {DIM}it was created on a different Google account than{OFF}")
+        print(f"  {BOLD}{sender}{OFF}")
+        print()
+        print(f"  {DIM}Sign in as {sender} specifically, then:{OFF}")
+        print(f"  {CYAN}myaccount.google.com/apppasswords{OFF}")
+    else:
+        print(f"  {DIM}Set it again — spaces are fine:{OFF}")
+        print(f"  {BOLD}apexis email password abcd efgh ijkl mnop{OFF}")
+    print()
+    return 0 if ok else 1
+
+
 def show_outbox() -> int:
     waiting = mail.outbox()
 
@@ -268,6 +323,8 @@ def main(action: str = "show", value: str | None = None) -> int:
         return test()
     if action == "outbox":
         return show_outbox()
+    if action == "check":
+        return check()
 
     if action in {"from", "password", "to"}:
         if not value:
