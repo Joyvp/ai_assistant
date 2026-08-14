@@ -222,12 +222,29 @@ def _deliver(to: str, subject: str, body: str, transport=None) -> None:
             server.login(sender(), password())
             server.send_message(message)
     except smtplib.SMTPAuthenticationError as exc:
-        raise MailError(
-            "the email account rejected the password. For Gmail this must "
-            "be an App Password, not your normal one."
-        ) from exc
+        # Quote the server verbatim. Guessing at the cause here is how a
+        # wrong username spends an hour being debugged as a wrong password.
+        detail = ""
+        try:
+            detail = exc.smtp_error.decode("utf-8", "replace").strip()
+        except (AttributeError, UnicodeDecodeError):
+            detail = str(exc)
+        raise MailError(f"the mail server rejected the login.\n  {detail}") from exc
     except (smtplib.SMTPException, OSError) as exc:
         raise MailError(f"could not reach the mail server: {exc}") from exc
+
+
+def try_send(to: str, subject: str, body: str, *, transport=None) -> str:
+    """Send, returning "" on success or the reason it failed.
+
+    ``notify`` deliberately hides failures so a broken mailbox cannot break
+    a job. Setup needs the opposite: the actual reason, in full.
+    """
+    try:
+        _deliver(to, subject, body, transport=transport)
+    except MailError as exc:
+        return str(exc)
+    return ""
 
 
 def notify(subject: str, body: str, *, transport=None) -> bool:

@@ -406,3 +406,82 @@ def test_an_address_with_a_stray_space_is_not_mangled(configured):
     mail_cli.main("to", "joy@example.com")
 
     assert mail.owner() == "joy@example.com"
+
+
+# -- the failure message must diagnose, not guess --------------------------
+
+
+def test_a_failed_test_quotes_the_server(configured, monkeypatch, capsys):
+    """The old message asserted "must be an App Password" for every auth
+    failure, including a wrong username. A confident wrong diagnosis costs
+    more time than no diagnosis."""
+    def reject(to, subject, body, transport=None):
+        raise mail.MailError(
+            "the mail server rejected the login.\n"
+            "  5.7.8 Username and Password not accepted."
+        )
+
+    monkeypatch.setattr(mail, "_deliver", reject)
+
+    assert mail_cli.test() == 1
+    assert "5.7.8" in capsys.readouterr().out
+
+
+def test_bad_credentials_suggests_the_account_might_be_wrong(
+    configured, monkeypatch, capsys
+):
+    def reject(to, subject, body, transport=None):
+        raise mail.MailError("Username and Password not accepted BadCredentials")
+
+    monkeypatch.setattr(mail, "_deliver", reject)
+    mail_cli.test()
+
+    assert "different Google account" in capsys.readouterr().out
+
+
+def test_a_normal_password_is_named_as_such(configured, monkeypatch, capsys):
+    def reject(to, subject, body, transport=None):
+        raise mail.MailError("Application-specific password required")
+
+    monkeypatch.setattr(mail, "_deliver", reject)
+    mail_cli.test()
+
+    assert "your normal Google password" in capsys.readouterr().out
+
+
+def test_a_network_failure_is_not_blamed_on_the_password(
+    configured, monkeypatch, capsys
+):
+    def reject(to, subject, body, transport=None):
+        raise mail.MailError("could not reach the mail server: timed out")
+
+    monkeypatch.setattr(mail, "_deliver", reject)
+    mail_cli.test()
+    out = capsys.readouterr().out
+
+    assert "Network problem" in out
+    assert "App Password" not in out
+
+
+def test_the_test_shows_which_account_it_is_using(configured, monkeypatch, capsys):
+    monkeypatch.setattr(mail, "_deliver", lambda *a, **k: None)
+    mail_cli.test()
+    out = capsys.readouterr().out
+
+    assert "apexis.bot@gmail.com" in out
+    assert "joy@example.com" in out
+
+
+def test_try_send_reports_the_reason(configured, monkeypatch):
+    monkeypatch.setattr(
+        mail, "_deliver",
+        lambda *a, **k: (_ for _ in ()).throw(mail.MailError("nope"))
+    )
+
+    assert mail.try_send("joy@example.com", "s", "b") == "nope"
+
+
+def test_try_send_is_empty_on_success(configured, monkeypatch):
+    monkeypatch.setattr(mail, "_deliver", lambda *a, **k: None)
+
+    assert mail.try_send("joy@example.com", "s", "b") == ""

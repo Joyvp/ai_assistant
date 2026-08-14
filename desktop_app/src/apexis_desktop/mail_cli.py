@@ -153,21 +153,43 @@ def test() -> int:
         print(f"\n  {RED}not set up yet{OFF} {DIM}— apexis email setup{OFF}\n")
         return 1
 
-    print(f"\n  {DIM}sending a test to {mail.owner()}...{OFF}")
+    print(f"\n  {DIM}from {mail.sender()}{OFF}")
+    print(f"  {DIM}to   {mail.owner()}{OFF}")
+    print(f"  {DIM}via  {mail.host()}:{mail.port()}{OFF}")
+    print(f"  {DIM}sending...{OFF}")
 
-    ok = mail.notify(
+    reason = mail.try_send(
+        mail.owner(),
         "[APEXIS] test",
         "This is APEXIS checking that it can reach you.\n\n"
         "If you're reading this, it can. Nothing else was sent.",
     )
 
-    if ok:
+    if not reason:
         print(f"  {GREEN}sent{OFF} {DIM}— check {mail.owner()}{OFF}\n")
         return 0
 
-    print(f"  {RED}failed{OFF}")
-    print(f"  {DIM}For Gmail the password must be an App Password, "
-          f"not your normal one.{OFF}\n")
+    print(f"\n  {RED}failed{OFF}")
+    print(f"  {reason}")
+    print()
+
+    low = reason.lower()
+    if "username and password not accepted" in low or "badcredentials" in low:
+        print(f"  {BOLD}Most likely:{OFF} the 16-character App Password is wrong,")
+        print(f"  {DIM}or it belongs to a different Google account than{OFF}")
+        print(f"  {DIM}{mail.sender()}.{OFF}")
+        print()
+        print(f"  {DIM}Check: is {mail.sender()} the SAME account you made{OFF}")
+        print(f"  {DIM}the App Password on? Make a fresh one if unsure:{OFF}")
+        print(f"  {CYAN}myaccount.google.com/apppasswords{OFF}")
+    elif "application-specific password required" in low:
+        print(f"  {BOLD}That was your normal Google password.{OFF}")
+        print(f"  {DIM}You need an App Password: "
+              f"myaccount.google.com/apppasswords{OFF}")
+    elif "could not reach" in low:
+        print(f"  {BOLD}Network problem, not a password problem.{OFF}")
+        print(f"  {DIM}Is this machine online?{OFF}")
+    print()
     return 1
 
 
