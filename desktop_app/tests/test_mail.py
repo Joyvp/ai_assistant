@@ -369,3 +369,40 @@ def test_away_is_reachable_from_the_parser():
 
     args = build_parser().parse_args(["away", "at", "the", "shop"])
     assert args.note == ["at", "the", "shop"]
+
+
+# -- pasting an app password the way Google shows it -----------------------
+
+
+def test_a_spaced_app_password_is_accepted(configured):
+    """Google displays app passwords as "abcd efgh ijkl mnop".
+
+    Nobody retypes that without spaces. argparse saw four arguments and
+    errored out. The shape the user is given must be the shape the command
+    accepts.
+    """
+    mail_cli.main("password", "abcd ltnh zjpf zhpk")
+
+    assert mail.password() == "abcdltnhzjpfzhpk"
+
+
+def test_an_unspaced_app_password_still_works(configured):
+    mail_cli.main("password", "abcdltnhzjpfzhpk")
+
+    assert mail.password() == "abcdltnhzjpfzhpk"
+
+
+def test_the_parser_accepts_a_spaced_password():
+    from apexis_desktop.cli import build_parser
+
+    args = build_parser().parse_args(
+        ["email", "password", "abcd", "ltnh", "zjpf", "zhpk"]
+    )
+    assert args.value == ["abcd", "ltnh", "zjpf", "zhpk"]
+
+
+def test_an_address_with_a_stray_space_is_not_mangled(configured):
+    """Only the password is space-stripped; addresses keep their shape."""
+    mail_cli.main("to", "joy@example.com")
+
+    assert mail.owner() == "joy@example.com"

@@ -252,6 +252,9 @@ def main(action: str = "show", value: str | None = None) -> int:
             print(f"\n  {DIM}usage: apexis email {action} VALUE{OFF}\n")
             return 1
         field = {"from": "sender", "password": "password", "to": "owner"}[action]
+        if field == "password":
+            # Gmail shows app passwords in four spaced groups.
+            value = value.replace(" ", "")
         return set_value(field, value)
 
     if action == "approve":

@@ -45,7 +45,9 @@ def build_parser() -> argparse.ArgumentParser:
                  "approve", "drop"],
         help="what to do",
     )
-    email_parser.add_argument("value", nargs="?", help="the value to set")
+    # Google displays app passwords as "abcd efgh ijkl mnop", so people
+    # paste them with spaces. Take every remaining word and join it.
+    email_parser.add_argument("value", nargs="*", help="the value to set")
 
     research_parser = commands.add_parser(
         "research",
@@ -138,7 +140,7 @@ def main() -> int:
     if args.command == "email":
         from apexis_desktop import mail_cli
 
-        return mail_cli.main(args.action, args.value)
+        return mail_cli.main(args.action, " ".join(args.value) or None)
 
     if args.command == "research":
         from apexis_desktop import research
