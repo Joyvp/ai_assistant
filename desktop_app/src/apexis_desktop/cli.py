@@ -27,6 +27,19 @@ def build_parser() -> argparse.ArgumentParser:
 
     commands.add_parser("chat", help="Start local chat with the Mock Brain")
 
+    research_parser = commands.add_parser(
+        "research",
+        help="Ask a question about some web pages — gather, then think once",
+    )
+    research_parser.add_argument(
+        "action",
+        nargs="?",
+        help="the question, or: list, show <id>, answer <id>, prep <question>",
+    )
+    research_parser.add_argument(
+        "words", nargs="*", help="more of the question, and any URLs"
+    )
+
     cloud_parser = commands.add_parser(
         "cloud", help="Tier 3 — what happens when a task is too hard"
     )
@@ -91,6 +104,11 @@ def main() -> int:
 
     if args.command == "chat":
         return run_chat(MockProvider())
+
+    if args.command == "research":
+        from apexis_desktop import research
+
+        return research.main(args.action, args.words)
 
     if args.command == "cloud":
         from apexis_desktop import cloud_cli
