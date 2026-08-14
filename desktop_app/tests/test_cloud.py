@@ -317,3 +317,37 @@ def test_the_routing_notice_does_not_promise_a_network_call():
     assert "leaves your network" not in notice
     # And it must not name a provider the user may not even be using.
     assert "Claude" not in notice
+
+
+# -- the command must be reachable, not merely written --------------------
+
+
+def test_the_providers_command_is_accepted_by_the_parser():
+    """`apexis cloud providers` existed for a week but argparse rejected it.
+
+    Writing a command is not shipping a command. Same bug as allow_cloud
+    defaulting to False: built, tested, unreachable.
+    """
+    from apexis_desktop.cli import build_parser
+
+    args = build_parser().parse_args(["cloud", "providers"])
+    assert args.action == "providers"
+
+
+def test_the_providers_command_lists_every_provider(capsys):
+    from apexis_desktop import cloud_cli
+
+    assert cloud_cli.main("providers") == 0
+    out = capsys.readouterr().out
+    for name in cloud.PROVIDERS:
+        assert name in out
+
+
+def test_the_providers_list_says_who_trains_on_your_data(capsys):
+    from apexis_desktop import cloud_cli
+
+    cloud_cli.main("providers")
+    out = capsys.readouterr().out
+
+    assert "trains on your data" in out
+    assert "Google may train" in out

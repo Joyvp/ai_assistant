@@ -98,6 +98,9 @@ def main(action: str = "show", value: str | None = None) -> int:
         # "on" is ambiguous, so pick the one that costs nothing.
         return set_mode("handoff")
 
+    if action == "providers":
+        return providers()
+
     if action == "provider":
         if not value:
             return providers()
