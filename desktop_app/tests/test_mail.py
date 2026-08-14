@@ -538,3 +538,89 @@ def test_check_is_reachable_from_the_parser():
 
     args = build_parser().parse_args(["email", "check"])
     assert args.action == "check"
+
+
+# -- the doctor ------------------------------------------------------------
+
+
+def test_doctor_needs_configuration_first(capsys):
+    assert mail_cli.doctor() == 1
+    assert "nothing configured" in capsys.readouterr().out
+
+
+def test_doctor_reports_a_network_failure_as_a_network_failure(
+    configured, monkeypatch, capsys
+):
+    """Step 1 failing is a firewall, not a password. Saying 'check your
+    password' here sends the user to fix something that is not broken."""
+    import smtplib
+
+    def refuse(*a, **k):
+        raise OSError("connection refused")
+
+    monkeypatch.setattr(smtplib, "SMTP", refuse)
+
+    assert mail_cli.doctor() == 1
+    out = capsys.readouterr().out
+
+    assert "cannot reach" in out
+    assert "not a password one" in out
+
+
+def test_doctor_separates_login_failure_from_connection(
+    configured, monkeypatch, capsys
+):
+    import smtplib
+
+    class FakeServer:
+        def __init__(self, *a, **k):
+            pass
+
+        def starttls(self, context=None):
+            pass
+
+        def login(self, user, secret):
+            raise smtplib.SMTPAuthenticationError(535, b"5.7.8 BadCredentials")
+
+        def close(self):
+            pass
+
+        def quit(self):
+            pass
+
+    monkeypatch.setattr(smtplib, "SMTP", FakeServer)
+
+    assert mail_cli.doctor() == 1
+    out = capsys.readouterr().out
+
+    assert "connection is fine" in out
+    assert "2-Step Verification" in out
+
+
+def test_doctor_passes_when_everything_works(configured, monkeypatch, capsys):
+    import smtplib
+
+    class FakeServer:
+        def __init__(self, *a, **k):
+            pass
+
+        def starttls(self, context=None):
+            pass
+
+        def login(self, user, secret):
+            pass
+
+        def quit(self):
+            pass
+
+    monkeypatch.setattr(smtplib, "SMTP", FakeServer)
+
+    assert mail_cli.doctor() == 0
+    assert "Everything works" in capsys.readouterr().out
+
+
+def test_doctor_is_reachable_from_the_parser():
+    from apexis_desktop.cli import build_parser
+
+    args = build_parser().parse_args(["email", "doctor"])
+    assert args.action == "doctor"

@@ -248,6 +248,99 @@ def check() -> int:
     return 0 if ok else 1
 
 
+def doctor() -> int:
+    """Test the connection one step at a time, so the failure has a location.
+
+    'It failed' is not a diagnosis. Reaching the server, starting TLS and
+    authenticating are three separate things that fail for three unrelated
+    reasons, and only the last one is about the password.
+    """
+    import smtplib
+    import socket
+    import ssl
+
+    print()
+    print(f"  {BOLD}Email doctor{OFF}")
+    print()
+
+    sender = mail.sender()
+    secret = mail.password()
+
+    if not sender or not secret:
+        print(f"  {RED}nothing configured yet{OFF}\n")
+        return 1
+
+    print(f"  account  {sender}")
+    print(f"  password {len(secret)} chars, "
+          f"{'lowercase letters only' if secret.isalpha() and secret.islower() else 'MIXED - suspicious'}")
+    print()
+
+    # Step 1: can we even reach Gmail?
+    print(f"  {DIM}1. reaching {mail.host()}:{mail.port()}...{OFF}")
+    try:
+        server = smtplib.SMTP(mail.host(), mail.port(), timeout=20)
+    except (OSError, socket.timeout) as exc:
+        print(f"     {RED}✗ cannot reach the server{OFF}")
+        print(f"     {DIM}{exc}{OFF}")
+        print(f"     {DIM}This is a network or firewall problem, not a password one.{OFF}\n")
+        return 1
+    print(f"     {GREEN}✓ connected{OFF}")
+
+    # Step 2: encryption
+    print(f"  {DIM}2. starting encryption...{OFF}")
+    try:
+        server.starttls(context=ssl.create_default_context())
+    except smtplib.SMTPException as exc:
+        print(f"     {RED}✗ TLS failed: {exc}{OFF}\n")
+        server.close()
+        return 1
+    print(f"     {GREEN}✓ encrypted{OFF}")
+
+    # Step 3: the actual login
+    print(f"  {DIM}3. logging in as {sender}...{OFF}")
+    try:
+        server.login(sender, secret)
+    except smtplib.SMTPAuthenticationError as exc:
+        detail = ""
+        try:
+            detail = exc.smtp_error.decode("utf-8", "replace")
+        except Exception:
+            detail = str(exc)
+        print(f"     {RED}✗ rejected{OFF}")
+        print(f"     {DIM}{detail.strip()}{OFF}")
+        server.close()
+        print()
+        print(f"  {BOLD}The connection is fine. Google is refusing this "
+              f"account.{OFF}")
+        print()
+        print(f"  {DIM}Things that cause this even with a fresh App Password:{OFF}")
+        print(f"    {DIM}· 2-Step Verification is not actually on for "
+              f"{sender}{OFF}")
+        print(f"    {DIM}· the account has never been opened in a browser{OFF}")
+        print(f"    {DIM}· the account is new and Google has not released "
+              f"SMTP for it yet{OFF}")
+        print()
+        print(f"  {BOLD}Fallback that always works:{OFF} use your main Gmail as")
+        print(f"  {DIM}the sender. An App Password still limits it to mail "
+              f"only.{OFF}")
+        print(f"    {BOLD}apexis email from your.main@gmail.com{OFF}")
+        print()
+        return 1
+    except smtplib.SMTPException as exc:
+        print(f"     {RED}✗ {exc}{OFF}\n")
+        server.close()
+        return 1
+
+    print(f"     {GREEN}✓ logged in{OFF}")
+    server.quit()
+
+    print()
+    print(f"  {GREEN}{BOLD}Everything works.{OFF} "
+          f"{DIM}Send one with: apexis email test{OFF}")
+    print()
+    return 0
+
+
 def show_outbox() -> int:
     waiting = mail.outbox()
 
@@ -325,6 +418,8 @@ def main(action: str = "show", value: str | None = None) -> int:
         return show_outbox()
     if action == "check":
         return check()
+    if action == "doctor":
+        return doctor()
 
     if action in {"from", "password", "to"}:
         if not value:
