@@ -368,11 +368,14 @@ class Memory:
         # Quoting each line and labelling the speaker fixes that.
         lines = "\n".join(f'- The user said: "{f.text}"' for f in stored)
         return (
-            "\n\nFACTS YOU KNOW ABOUT THE USER:\n"
+            "\n\nBACKGROUND (reference only — do not bring these up):\n"
             f"{lines}\n"
-            "These are true. When the user asks about any of them, answer "
-            "directly and plainly from this list. Do not say you are unsure "
-            "and do not ask them to clarify."
+            "These are true, but they are NOT the topic of conversation. "
+            "Ignore them completely unless the user's message is directly "
+            "asking about one of them. If the user says something casual "
+            "like a greeting, just greet them back and say nothing about "
+            "this list. When they DO ask, answer plainly from it without "
+            "hedging."
         )
 
     def stats(self) -> dict[str, int]:

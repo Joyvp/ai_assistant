@@ -306,7 +306,7 @@ def test_facts_block_attributes_quotes_to_the_user(mem: Memory) -> None:
     block = mem.facts_block()
 
     assert 'The user said: "I live in Saskatoon"' in block
-    assert "FACTS YOU KNOW ABOUT THE USER" in block
+    assert "BACKGROUND" in block
 
 
 def test_facts_block_tells_model_not_to_hedge(mem: Memory) -> None:
@@ -314,5 +314,31 @@ def test_facts_block_tells_model_not_to_hedge(mem: Memory) -> None:
 
     block = mem.facts_block().lower()
 
-    assert "directly" in block
-    assert "clarify" in block
+    assert "plainly" in block
+    assert "without hedging" in block
+
+
+def test_facts_block_tells_the_model_not_to_volunteer_them(mem: Memory) -> None:
+    """llama3.2:1b answered "hey" with a restaurant recommendation.
+
+    The old wording said "answer directly and plainly from this list".
+    phi3 read that as "when asked". A 1.2B model read it as "right now"
+    and recited the user's location at a greeting. An instruction that
+    only works on the bigger model is a bug on the tier that gets every
+    easy task.
+    """
+    mem.remember("I live in Saskatoon")
+
+    block = mem.facts_block().lower()
+
+    assert "do not bring these up" in block
+    assert "greeting" in block
+
+
+def test_facts_block_still_answers_when_actually_asked(mem: Memory) -> None:
+    """Suppressing chatter must not turn into refusing to answer."""
+    mem.remember("I live in Saskatoon")
+
+    block = mem.facts_block().lower()
+
+    assert "when they do ask" in block
