@@ -74,12 +74,39 @@ def _answer_with(job: Job, provider) -> Job:
     return job
 
 
-def drain(*, verbose: bool = True) -> dict:
-    """Work the whole queue in one model load. Returns a small summary."""
+def someone_is_using_the_model() -> bool:
+    """True when a model is already resident on the laptop.
+
+    Ollama keeps a model loaded for five minutes after the last request, so
+    a resident model means somebody was talking to it very recently. A
+    background drain that barges in would make their next reply crawl.
+    """
+    try:
+        fleet = load_fleet()
+        return ModelLifecycle(host=fleet.laptop.host).is_resident(LAPTOP_MODEL)
+    except Exception:
+        return False
+
+
+def drain(*, verbose: bool = True, if_idle: bool = False) -> dict:
+    """Work the whole queue in one model load. Returns a small summary.
+
+    ``if_idle`` is for the automatic timer: it declines to run when someone
+    is mid-conversation. A person typing at the machine outranks a queue.
+    Manual runs never defer, because the user asked for it explicitly.
+    """
     pending = queued()
-    summary = {"done": 0, "failed": 0, "emailed": 0, "jobs": len(pending)}
+    summary = {"done": 0, "failed": 0, "emailed": 0, "jobs": len(pending),
+               "deferred": False}
 
     if not pending:
+        return summary
+
+    if if_idle and someone_is_using_the_model():
+        summary["deferred"] = True
+        if verbose:
+            print(f"\n  {DIM}{LAPTOP_MODEL} is in use — leaving the queue "
+                  f"for later{OFF}\n")
         return summary
 
     if verbose:
@@ -160,14 +187,19 @@ def _report(job: Job) -> bool:
     return mail.notify(subject, body)
 
 
-def watch(interval: int = DEFAULT_INTERVAL, *, once: bool = False) -> int:
+def watch(
+    interval: int = DEFAULT_INTERVAL,
+    *,
+    once: bool = False,
+    if_idle: bool = False,
+) -> int:
     """Keep draining the queue until interrupted.
 
     ``once`` drains and exits, which is the form a cron entry or systemd
     timer wants. The long-running form is for a terminal you leave open.
     """
     if once:
-        drain()
+        drain(if_idle=if_idle)
         return 0
 
     print(f"\n  {CYAN}●{OFF} {BOLD}watching{OFF} "
@@ -180,7 +212,7 @@ def watch(interval: int = DEFAULT_INTERVAL, *, once: bool = False) -> int:
 
     try:
         while True:
-            drain()
+            drain(if_idle=if_idle)
             time.sleep(interval)
     except KeyboardInterrupt:
         print(f"\n  {DIM}stopped{OFF}\n")

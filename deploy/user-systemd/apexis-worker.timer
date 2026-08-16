@@ -1,0 +1,19 @@
+[Unit]
+Description=APEXIS — check for queued work every few minutes
+Documentation=https://github.com/Joyvp/ai_assistant
+
+[Timer]
+# First check shortly after login, so queueing something and walking out
+# does not mean waiting a full interval.
+OnStartupSec=2min
+
+# Then every five minutes. Draining an empty queue costs nothing: it reads
+# one directory, finds nothing, and exits without touching a model.
+OnUnitActiveSec=5min
+
+# Never fire two drains at once on a machine that was asleep.
+AccuracySec=1min
+Persistent=false
+
+[Install]
+WantedBy=timers.target

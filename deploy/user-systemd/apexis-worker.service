@@ -1,0 +1,25 @@
+[Unit]
+Description=APEXIS — work through the queued jobs
+Documentation=https://github.com/Joyvp/ai_assistant
+# Pointless without a network: every job starts by fetching pages.
+After=network-online.target
+
+[Service]
+Type=oneshot
+
+# Drain the queue once and exit. The timer decides how often.
+ExecStart=%h/.local/bin/apexis watch --once --if-idle
+
+# A job can be slow: several pages to fetch, then a model to load. But it
+# must not run forever, or two drains could overlap and load phi3 twice.
+TimeoutStartSec=1800
+
+# Be the last thing on the machine to get CPU or disk. This runs while the
+# user is out, so finishing sooner is worth nothing, and interfering with
+# anything else is worth less than nothing.
+Nice=15
+IOSchedulingClass=idle
+
+# It only ever writes to its own state directories.
+PrivateTmp=true
+NoNewPrivileges=true

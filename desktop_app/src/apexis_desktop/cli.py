@@ -41,6 +41,11 @@ def build_parser() -> argparse.ArgumentParser:
     watch_parser.add_argument(
         "--interval", type=int, default=60, help="seconds between checks"
     )
+    watch_parser.add_argument(
+        "--if-idle",
+        action="store_true",
+        help="skip when someone is using the model (for the timer)",
+    )
 
     commands.add_parser("queue", help="What's waiting to be worked on")
 
@@ -153,7 +158,9 @@ def main() -> int:
     if args.command == "watch":
         from apexis_desktop import worker
 
-        return worker.watch(args.interval, once=args.once)
+        return worker.watch(
+            args.interval, once=args.once, if_idle=args.if_idle
+        )
 
     if args.command == "queue":
         from apexis_desktop import worker

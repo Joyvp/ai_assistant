@@ -360,3 +360,81 @@ def test_queue_is_reachable_from_the_parser():
     from apexis_desktop.cli import build_parser
 
     assert build_parser().parse_args(["queue"]).command == "queue"
+
+
+# -- the automatic timer must not barge in ---------------------------------
+
+
+def test_the_timer_defers_when_the_model_is_in_use(wired, monkeypatch):
+    """Ollama holds a model for five minutes after the last request, so a
+    resident model means someone was just talking to it. A background drain
+    that seizes it would make the human's next reply crawl."""
+    monkeypatch.setattr(worker, "someone_is_using_the_model", lambda: True)
+    worker.add("q", ["https://example.com/a"])
+
+    summary = worker.drain(verbose=False, if_idle=True)
+
+    assert summary["deferred"] is True
+    assert summary["done"] == 0
+    assert wired.loads == 0
+
+
+def test_a_deferred_job_stays_queued(wired, monkeypatch):
+    monkeypatch.setattr(worker, "someone_is_using_the_model", lambda: True)
+    worker.add("q", ["https://example.com/a"])
+
+    worker.drain(verbose=False, if_idle=True)
+
+    assert len(worker.queued()) == 1
+
+
+def test_the_timer_runs_when_nothing_is_resident(wired, monkeypatch):
+    monkeypatch.setattr(worker, "someone_is_using_the_model", lambda: False)
+    worker.add("q", ["https://example.com/a"])
+
+    summary = worker.drain(verbose=False, if_idle=True)
+
+    assert summary["deferred"] is False
+    assert summary["done"] == 1
+
+
+def test_a_manual_run_never_defers(wired, monkeypatch):
+    """The user typed the command. Do not second-guess them."""
+    monkeypatch.setattr(worker, "someone_is_using_the_model", lambda: True)
+    worker.add("q", ["https://example.com/a"])
+
+    summary = worker.drain(verbose=False)
+
+    assert summary["deferred"] is False
+    assert summary["done"] == 1
+
+
+def test_an_empty_queue_never_touches_the_model(wired, monkeypatch):
+    """The timer fires every five minutes forever. Checking must be free."""
+    calls = []
+    monkeypatch.setattr(
+        worker, "someone_is_using_the_model", lambda: calls.append(1) or False
+    )
+
+    worker.drain(verbose=False, if_idle=True)
+
+    assert calls == []
+    assert wired.loads == 0
+
+
+def test_a_broken_probe_does_not_block_the_queue(wired, monkeypatch):
+    """If we cannot tell whether the model is busy, do the work rather than
+    silently never running again."""
+    def explode():
+        raise OSError("no route to host")
+
+    monkeypatch.setattr(worker, "load_fleet", explode)
+
+    assert worker.someone_is_using_the_model() is False
+
+
+def test_if_idle_is_reachable_from_the_parser():
+    from apexis_desktop.cli import build_parser
+
+    args = build_parser().parse_args(["watch", "--once", "--if-idle"])
+    assert args.if_idle is True
