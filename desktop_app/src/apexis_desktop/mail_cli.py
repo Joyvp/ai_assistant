@@ -407,6 +407,69 @@ def drop(index_text: str) -> int:
     return 0
 
 
+def inbox_on() -> int:
+    """Start listening for emailed instructions."""
+    from apexis_desktop import inbox
+
+    if not mail.is_configured():
+        print(f"\n  {RED}email is not set up yet{OFF} "
+              f"{DIM}— apexis email setup{OFF}\n")
+        return 1
+
+    inbox.set_enabled(True)
+    print()
+    print(f"  {GREEN}{BOLD}Listening.{OFF}")
+    print()
+    print(f"  {DIM}Email {mail.sender()} from {mail.owner()} with{OFF}")
+    print(f"  {DIM}a subject that starts with{OFF} {BOLD}apexis{OFF}{DIM}:{OFF}")
+    print()
+    print(f"    {BOLD}Subject:{OFF} apexis how much power does a pi 5 use")
+    print(f"    {BOLD}Body:{OFF}    https://www.raspberrypi.com/products/raspberry-pi-5/")
+    print()
+    print(f"  {DIM}It gets queued at the next check and answered by email.{OFF}")
+    print(f"  {DIM}Only mail from {mail.owner()} is listened to.{OFF}")
+    print(f"  {DIM}Stop with:  apexis email inbox-off{OFF}")
+    print()
+    return 0
+
+
+def inbox_off() -> int:
+    from apexis_desktop import inbox
+
+    inbox.set_enabled(False)
+    print(f"\n  {DIM}Not listening. Emailed instructions are ignored.{OFF}\n")
+    return 0
+
+
+def inbox_check() -> int:
+    """Read the mailbox right now and say exactly what happened."""
+    from apexis_desktop import inbox
+
+    if not inbox.is_enabled():
+        print(f"\n  {DIM}not listening — turn it on with: "
+              f"apexis email inbox{OFF}\n")
+        return 1
+
+    print(f"\n  {DIM}reading {inbox.imap_host()} as {mail.sender()}...{OFF}")
+    result = inbox.collect(verbose=False)
+
+    if result["error"]:
+        print(f"\n  {RED}could not read the mailbox{OFF}")
+        print(f"  {DIM}{result['error']}{OFF}\n")
+        return 1
+
+    if not result["queued"]:
+        print(f"\n  {DIM}nothing new — no unhandled mail with "
+              f"'apexis' in the subject{OFF}\n")
+        return 0
+
+    print(f"\n  {GREEN}queued {result['queued']}:{OFF}")
+    for question in result["questions"]:
+        print(f"    {BOLD}{question}{OFF}")
+    print(f"\n  {DIM}answers arrive by email once the worker runs{OFF}\n")
+    return 0
+
+
 def main(action: str = "show", value: str | None = None) -> int:
     if action in {None, "show"}:
         return show()
@@ -420,6 +483,12 @@ def main(action: str = "show", value: str | None = None) -> int:
         return check()
     if action == "doctor":
         return doctor()
+    if action == "inbox":
+        return inbox_on()
+    if action == "inbox-off":
+        return inbox_off()
+    if action == "inbox-check":
+        return inbox_check()
 
     if action in {"from", "password", "to"}:
         if not value:

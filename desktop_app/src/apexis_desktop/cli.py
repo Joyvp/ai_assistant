@@ -64,7 +64,8 @@ def build_parser() -> argparse.ArgumentParser:
         nargs="?",
         default="show",
         choices=["show", "setup", "test", "check", "doctor", "outbox",
-                 "from", "password", "to", "approve", "drop"],
+                 "from", "password", "to", "approve", "drop",
+                 "inbox", "inbox-off", "inbox-check"],
         help="what to do",
     )
     # Google displays app passwords as "abcd efgh ijkl mnop", so people

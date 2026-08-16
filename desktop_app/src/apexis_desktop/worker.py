@@ -24,7 +24,7 @@ from datetime import datetime, timezone
 from apexis_shared.jobs import Job, JobState
 from apexis_shared.prepare import prepare
 
-from apexis_desktop import away, mail, research
+from apexis_desktop import away, inbox, mail, research
 from apexis_desktop.brain.lifecycle import ModelLifecycle
 from apexis_desktop.brain.ollama import OllamaError, OllamaProvider
 from apexis_desktop.nodes import load_fleet
@@ -88,6 +88,18 @@ def someone_is_using_the_model() -> bool:
         return False
 
 
+def collect_mail(*, verbose: bool = True) -> int:
+    """Pull any emailed questions onto the queue before working.
+
+    Wrapped so completely that a broken mailbox cannot stop the jobs that
+    are already queued from being finished.
+    """
+    try:
+        return int(inbox.collect(verbose=verbose).get("queued", 0))
+    except Exception:
+        return 0
+
+
 def drain(*, verbose: bool = True, if_idle: bool = False) -> dict:
     """Work the whole queue in one model load. Returns a small summary.
 
@@ -95,6 +107,7 @@ def drain(*, verbose: bool = True, if_idle: bool = False) -> dict:
     is mid-conversation. A person typing at the machine outranks a queue.
     Manual runs never defer, because the user asked for it explicitly.
     """
+    collect_mail(verbose=verbose)
     pending = queued()
     summary = {"done": 0, "failed": 0, "emailed": 0, "jobs": len(pending),
                "deferred": False}
