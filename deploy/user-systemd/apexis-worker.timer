@@ -3,17 +3,21 @@ Description=APEXIS — check for queued work every few minutes
 Documentation=https://github.com/Joyvp/ai_assistant
 
 [Timer]
-# First check shortly after login, so queueing something and walking out
-# does not mean waiting a full interval.
-OnStartupSec=2min
+# An absolute schedule, not one relative to the last run.
+#
+# The first version used OnStartupSec + OnUnitActiveSec, and systemd showed
+# NEXT as "-" after the first fire: with a oneshot service the chain can
+# lapse and never schedule again. A wall-clock schedule always knows when
+# the next one is, through sleeps, reboots and closed lids.
+OnCalendar=*:0/5
 
-# Then every five minutes. Draining an empty queue costs nothing: it reads
-# one directory, finds nothing, and exits without touching a model.
-OnUnitActiveSec=5min
+# Catch up once if the machine was asleep when a run was due, rather than
+# firing every missed run at once.
+Persistent=true
 
-# Never fire two drains at once on a machine that was asleep.
+# Do not stampede on the minute alongside every other timer on the system.
+RandomizedDelaySec=30
 AccuracySec=1min
-Persistent=false
 
 [Install]
 WantedBy=timers.target

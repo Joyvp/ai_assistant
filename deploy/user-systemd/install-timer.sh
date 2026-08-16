@@ -52,10 +52,10 @@ cat > "$UNITS/apexis-worker.timer" <<'UNIT'
 Description=APEXIS — check for queued work every few minutes
 
 [Timer]
-OnStartupSec=2min
-OnUnitActiveSec=5min
+OnCalendar=*:0/5
+Persistent=true
+RandomizedDelaySec=30
 AccuracySec=1min
-Persistent=false
 
 [Install]
 WantedBy=timers.target
@@ -93,10 +93,17 @@ echo "  ${GREEN}wrote${OFF} $HOME/.local/bin/apexis-timer-off"
 
 echo
 if systemctl --user is-active --quiet apexis-worker.timer; then
-  echo "  ${GREEN}${BOLD}Running.${OFF}"
-  NEXT=$(systemctl --user list-timers apexis-worker.timer --no-pager 2>/dev/null \
-         | awk 'NR==2 {print $1, $2, $3}')
-  [ -n "${NEXT:-}" ] && echo "  ${DIM}next check: $NEXT${OFF}"
+  # "active" is not enough. A timer with no NEXT is active and will never
+  # fire again, which is exactly how the first version of this file failed.
+  NEXT=$(systemctl --user show apexis-worker.timer \
+         -p NextElapseUSecRealtime --value 2>/dev/null)
+  if [ -n "${NEXT:-}" ] && [ "${NEXT}" != "0" ] && [ "${NEXT}" != "n/a" ]; then
+    echo "  ${GREEN}${BOLD}Running.${OFF}"
+    echo "  ${DIM}next check: ${NEXT}${OFF}"
+  else
+    echo "  ${RED}The timer is active but has nothing scheduled.${OFF}"
+    echo "  ${DIM}Tell me, and paste: systemctl --user list-timers${OFF}"
+  fi
 else
   echo "  ${YELLOW}Installed, but not running yet.${OFF}"
   echo "  ${DIM}Start it with: systemctl --user start apexis-worker.timer${OFF}"
