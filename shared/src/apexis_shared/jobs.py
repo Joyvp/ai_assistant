@@ -17,11 +17,22 @@ model code at all — a ``Job`` is just prepared text with a question attached.
 from __future__ import annotations
 
 import hashlib
+import os
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
+
+
+# How much gathered text to put in front of the model.
+#
+# This was 2000 words. Every word must be read before the model can write
+# anything, and on a 2015 dual-core CPU that measured over 200 seconds of
+# prompt-eval alone - so the job timed out before producing a single token.
+# 700 words keeps enough material to answer from while staying inside a
+# few minutes on slow hardware. Override with APEXIS_PROMPT_WORDS.
+DEFAULT_PROMPT_WORDS = int(os.getenv("APEXIS_PROMPT_WORDS", "700"))
 
 
 class JobState(str, Enum):
@@ -172,7 +183,7 @@ class Job(BaseModel):
 
         return "\n\n".join(parts)
 
-    def prompt(self, *, max_words: int = 2000) -> str:
+    def prompt(self, *, max_words: int = DEFAULT_PROMPT_WORDS) -> str:
         """The full instruction for the laptop's model."""
         material = self.context(max_words=max_words)
         if not material:

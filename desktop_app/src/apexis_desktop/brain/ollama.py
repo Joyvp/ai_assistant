@@ -36,6 +36,12 @@ class OllamaError(RuntimeError):
     """Raised when the local model cannot be reached or fails to respond."""
 
 
+# Time to wait for the NEXT token before giving up, not for the whole
+# answer. Prompt-eval of a long page on a 2015 dual-core CPU measured over
+# 200 seconds before the first word, so this is deliberately generous.
+DEFAULT_TIMEOUT = float(os.getenv("APEXIS_TIMEOUT", "600"))
+
+
 class OllamaProvider:
     """Stream responses from a locally running Ollama model.
 
@@ -50,7 +56,7 @@ class OllamaProvider:
         host: str | None = None,
         keep_alive: str | None = None,
         system_prompt: str | None = None,
-        timeout: float = 120.0,
+        timeout: float | None = None,
         client: httpx.Client | None = None,
         memory: object | None = None,
     ) -> None:
@@ -65,7 +71,13 @@ class OllamaProvider:
         # appended to the system prompt on every request, so newly added
         # facts take effect immediately without a restart.
         self.memory = memory
-        self.timeout = timeout
+
+        # A single number here was wrong. httpx applies it to the WHOLE
+        # request, so a slow machine that is streaming perfectly happily
+        # gets killed mid-answer. What actually needs bounding is silence:
+        # how long we wait between tokens. A 2015 laptop taking six minutes
+        # is fine as long as it keeps producing words.
+        self.timeout = timeout if timeout is not None else DEFAULT_TIMEOUT
 
         self._client = client
         self._owns_client = client is None
@@ -79,7 +91,18 @@ class OllamaProvider:
     @property
     def client(self) -> httpx.Client:
         if self._client is None:
-            self._client = httpx.Client(timeout=self.timeout, trust_env=False)
+            self._client = httpx.Client(
+                timeout=httpx.Timeout(
+                    # No overall deadline: a long answer is not a failure.
+                    None,
+                    connect=10.0,
+                    # Silence is the real failure signal. Prompt-eval on an
+                    # old CPU can take minutes before the first token, so
+                    # this has to cover the wait for token one.
+                    read=self.timeout,
+                ),
+                trust_env=False,
+            )
         return self._client
 
     def close(self) -> None:
@@ -228,6 +251,14 @@ class OllamaProvider:
             raise OllamaError(
                 f"cannot reach Ollama at {self.host}. Is it running? "
                 "Start it with:  ollama serve"
+            ) from exc
+        except httpx.ReadTimeout as exc:
+            # Say what actually happened and what to do about it, rather
+            # than "request failed".
+            raise OllamaError(
+                f"{self.model} went quiet for {self.timeout:.0f}s. "
+                "On a slow machine try a shorter page, or raise the limit "
+                "with:  export APEXIS_TIMEOUT=1200"
             ) from exc
         except httpx.HTTPError as exc:
             raise OllamaError(f"request failed: {exc}") from exc

@@ -538,3 +538,90 @@ def test_an_unreachable_model_is_reported_not_silent(monkeypatch):
     assert len(sent) == 1
     assert "cannot reach the model" in sent[0][0].lower()
     assert "Nothing was lost" in sent[0][1]
+
+
+# -- the timeout that could never have succeeded ----------------------------
+#
+# A real job on the user's 2015 dual-core laptop timed out. The arithmetic
+# said it was never possible: 2000 words of prompt is ~2600 tokens, and
+# prompt-eval on that CPU runs 8-20 tok/s, so the first token alone took
+# 130-325s against a 120s ceiling. Even the best case lost.
+
+
+def test_the_client_has_no_overall_deadline():
+    """A long answer is not a failure. Only silence is."""
+    import httpx
+    from apexis_desktop.brain.ollama import OllamaProvider
+
+    provider = OllamaProvider(model="phi3:mini")
+    timeout = provider.client.timeout
+    assert timeout.read is not None, "silence must still be bounded"
+    assert timeout.pool is None and timeout.write is None, (
+        "a whole-request deadline kills a healthy slow stream mid-answer"
+    )
+    provider.close()
+
+
+def test_the_silence_budget_covers_slow_prompt_eval():
+    from apexis_desktop.brain.ollama import DEFAULT_TIMEOUT
+    from apexis_shared.jobs import DEFAULT_PROMPT_WORDS
+
+    tokens = DEFAULT_PROMPT_WORDS * 1.3
+    worst_case_first_token = tokens / 8.0  # slowest measured prompt-eval
+    assert DEFAULT_TIMEOUT > worst_case_first_token * 2, (
+        "the wait for the first token must fit inside the budget, twice over"
+    )
+
+
+def test_the_prompt_is_small_enough_to_finish_on_old_hardware():
+    from apexis_shared.jobs import DEFAULT_PROMPT_WORDS
+
+    tokens = DEFAULT_PROMPT_WORDS * 1.3
+    slowest_first_token = tokens / 8.0
+    slowest_answer = 400 / 2.0
+    assert slowest_first_token + slowest_answer < 600, (
+        "a whole job must fit in the silence budget on the slowest machine"
+    )
+
+
+def test_connecting_still_fails_fast():
+    """No overall deadline must not mean hanging forever on a dead host."""
+    from apexis_desktop.brain.ollama import OllamaProvider
+
+    provider = OllamaProvider(model="phi3:mini")
+    assert provider.client.timeout.connect <= 15.0
+    provider.close()
+
+
+def test_a_timeout_says_what_to_do_about_it(monkeypatch):
+    import httpx
+    from apexis_desktop.brain.ollama import OllamaError, OllamaProvider
+
+    provider = OllamaProvider(model="phi3:mini")
+
+    class Boom:
+        def stream(self, *a, **k):
+            raise httpx.ReadTimeout("timed out")
+
+    monkeypatch.setattr(provider, "_client", Boom())
+
+    try:
+        list(provider.stream_messages([{"role": "user", "content": "hi"}]))
+        raise AssertionError("should have raised")
+    except OllamaError as exc:
+        message = str(exc)
+        assert "went quiet" in message
+        assert "APEXIS_TIMEOUT" in message, "tell the user the lever"
+
+
+def test_prompt_words_can_be_raised_for_a_faster_machine(monkeypatch):
+    """A slow default must not become a permanent ceiling."""
+    import importlib
+
+    monkeypatch.setenv("APEXIS_PROMPT_WORDS", "2500")
+    from apexis_shared import jobs
+
+    importlib.reload(jobs)
+    assert jobs.DEFAULT_PROMPT_WORDS == 2500
+    monkeypatch.delenv("APEXIS_PROMPT_WORDS")
+    importlib.reload(jobs)
