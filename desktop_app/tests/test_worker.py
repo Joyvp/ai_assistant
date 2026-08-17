@@ -438,3 +438,103 @@ def test_if_idle_is_reachable_from_the_parser():
 
     args = build_parser().parse_args(["watch", "--once", "--if-idle"])
     assert args.if_idle is True
+
+
+# -- a failure the user never hears about -----------------------------------
+#
+# Four real jobs died with HTTP 403 and the user waited six hours for an
+# email that was never going to arrive. Success was reported; failure was
+# silent. After "apexis away", silence is indistinguishable from progress.
+
+
+class _Boom:
+    """A job that cannot be prepared, however hard anyone tries."""
+
+
+def test_a_job_that_cannot_be_prepared_still_emails_the_user(monkeypatch, tmp_path):
+    from apexis_shared.jobs import Job, JobState, Source
+    from apexis_desktop import away, mail, research, worker
+
+    sent = []
+    job = Job(question="what is a pi", urls=["https://blocked.example"])
+    job.state = JobState.FAILED
+    job.sources = [Source(url="https://blocked.example", fetched_at="now",
+                          error="the site blocks automated readers (bot check)")]
+
+    monkeypatch.setattr(worker, "queued", lambda: [job])
+    monkeypatch.setattr(worker, "prepare", lambda j: j)
+    monkeypatch.setattr(research, "save", lambda j: None)
+    monkeypatch.setattr(research, "load", lambda i: job)
+    monkeypatch.setattr(away, "is_away", lambda: True)
+    monkeypatch.setattr(mail, "notify", lambda s, b, **k: sent.append((s, b)) or True)
+
+    summary = worker.drain(verbose=False)
+
+    assert summary["failed"] == 1
+    assert len(sent) == 1, "the user must be told their question died"
+    assert "what is a pi" in sent[0][0]
+
+
+def test_the_failure_email_explains_a_bot_check_in_plain_words(monkeypatch):
+    from apexis_shared.jobs import Job, JobState, Source
+    from apexis_desktop import away, mail, worker
+
+    job = Job(question="q", urls=["https://x.example"])
+    job.state = JobState.FAILED
+    job.sources = [Source(url="https://x.example", fetched_at="now",
+                          error="the site blocks automated readers (bot check)")]
+
+    sent = []
+    monkeypatch.setattr(away, "is_away", lambda: True)
+    monkeypatch.setattr(mail, "notify", lambda s, b, **k: sent.append(b) or True)
+
+    assert worker._report_failure(job) is True
+    body = sent[0]
+    assert "https://x.example" in body, "say which page"
+    assert "bot check" in body.lower()
+    assert "cannot be worked around" in body, "do not imply it is fixable"
+
+
+def test_no_failure_email_when_the_user_is_home(monkeypatch):
+    from apexis_shared.jobs import Job, JobState
+    from apexis_desktop import away, mail, worker
+
+    job = Job(question="q")
+    job.state = JobState.FAILED
+    sent = []
+    monkeypatch.setattr(away, "is_away", lambda: False)
+    monkeypatch.setattr(mail, "notify", lambda s, b, **k: sent.append(b) or True)
+
+    assert worker._report_failure(job) is False
+    assert sent == []
+
+
+def test_an_unreachable_model_is_reported_not_silent(monkeypatch):
+    from apexis_shared.jobs import Job, JobState
+    from apexis_desktop import away, mail, research, worker
+    from apexis_desktop.brain.ollama import OllamaError
+
+    job = Job(question="q")
+    job.state = JobState.PREPARED
+
+    sent = []
+    monkeypatch.setattr(worker, "queued", lambda: [job])
+    monkeypatch.setattr(worker, "prepare", lambda j: j)
+    monkeypatch.setattr(research, "save", lambda j: None)
+    monkeypatch.setattr(research, "load", lambda i: job)
+    monkeypatch.setattr(away, "is_away", lambda: True)
+    monkeypatch.setattr(mail, "notify", lambda s, b, **k: sent.append((s, b)) or True)
+
+    class Dead:
+        def __init__(self, host=None):
+            pass
+
+        def is_resident(self, model):
+            raise OllamaError("connection refused")
+
+    monkeypatch.setattr(worker, "ModelLifecycle", Dead)
+    worker.drain(verbose=False)
+
+    assert len(sent) == 1
+    assert "cannot reach the model" in sent[0][0].lower()
+    assert "Nothing was lost" in sent[0][1]

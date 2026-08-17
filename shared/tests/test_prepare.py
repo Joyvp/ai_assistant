@@ -328,3 +328,50 @@ def test_a_job_gets_a_stable_id_and_a_timestamp():
 
 def test_two_jobs_do_not_collide():
     assert Job(question="a").id != Job(question="b").id
+
+
+# -- refusals must be named, not numbered -----------------------------------
+
+
+class _FakeResponse:
+    def __init__(self, status, headers=None, text=""):
+        self.status_code = status
+        self.headers = headers or {}
+        self.text = text
+
+
+def test_a_cloudflare_challenge_is_recognised():
+    from apexis_shared.prepare import _is_bot_challenge
+
+    assert _is_bot_challenge(_FakeResponse(403, {"cf-mitigated": "challenge"}))
+
+
+def test_a_challenge_page_body_is_recognised():
+    from apexis_shared.prepare import _is_bot_challenge
+
+    assert _is_bot_challenge(_FakeResponse(403, text="<h1>Just a moment...</h1>"))
+
+
+def test_an_ordinary_403_is_not_called_a_bot_check():
+    from apexis_shared.prepare import _is_bot_challenge
+
+    assert not _is_bot_challenge(_FakeResponse(403, {"server": "nginx"},
+                                               "Forbidden"))
+
+
+def test_a_broken_response_does_not_crash_the_detector():
+    from apexis_shared.prepare import _is_bot_challenge
+
+    class Broken:
+        @property
+        def headers(self):
+            raise RuntimeError("nope")
+
+    assert _is_bot_challenge(Broken()) is False
+
+
+def test_we_look_like_a_browser_because_bot_strings_get_blocked():
+    from apexis_shared.prepare import BROWSER_HEADERS
+
+    assert "Mozilla/5.0" in BROWSER_HEADERS["User-Agent"]
+    assert "APEXIS" not in BROWSER_HEADERS["User-Agent"]

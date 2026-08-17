@@ -86,6 +86,49 @@ def extract_text(raw_html: str) -> tuple[str, str]:
     return title, "\n".join(lines)
 
 
+# Plenty of sites block on the User-Agent string alone, so looking like the
+# browser the user would have opened themselves gets us through those. It does
+# NOT get past a real bot challenge - Cloudflare's "Cf-Mitigated: challenge"
+# wants JavaScript executed, and no header will fake that. Those pages are
+# simply unreadable to a tool like this, and say so rather than pretending.
+BROWSER_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
+    ),
+    "Accept": (
+        "text/html,application/xhtml+xml,application/xml;q=0.9,"
+        "image/avif,image/webp,*/*;q=0.8"
+    ),
+    "Accept-Language": "en-US,en;q=0.9",
+    "Accept-Encoding": "gzip, deflate, br",
+    "Sec-Fetch-Dest": "document",
+    "Sec-Fetch-Mode": "navigate",
+    "Sec-Fetch-Site": "none",
+    "Upgrade-Insecure-Requests": "1",
+}
+
+
+def _is_bot_challenge(response) -> bool:
+    """Whether a refusal is a bot check rather than a real permission error."""
+    try:
+        headers = response.headers
+        if headers.get("cf-mitigated"):
+            return True
+        server = str(headers.get("server", "")).lower()
+        if "cloudflare" in server:
+            return True
+        body = str(getattr(response, "text", ""))[:4000].lower()
+        return any(
+            marker in body
+            for marker in ("just a moment", "attention required",
+                           "enable javascript", "checking your browser",
+                           "captcha")
+        )
+    except Exception:
+        return False
+
+
 def fetch(url: str, *, timeout: float = DEFAULT_TIMEOUT,
           client: httpx.Client | None = None) -> Source:
     """Fetch one page. Never raises — a failure is recorded on the Source.
@@ -99,7 +142,7 @@ def fetch(url: str, *, timeout: float = DEFAULT_TIMEOUT,
         timeout=timeout,
         follow_redirects=True,
         trust_env=False,
-        headers={"User-Agent": "APEXIS/0.3 (personal assistant; local)"},
+        headers=BROWSER_HEADERS,
     )
 
     try:
@@ -121,8 +164,22 @@ def fetch(url: str, *, timeout: float = DEFAULT_TIMEOUT,
         return Source(url=url, title=title, text=text, fetched_at=now)
 
     except httpx.HTTPStatusError as exc:
-        return Source(url=url, fetched_at=now,
-                      error=f"HTTP {exc.response.status_code}")
+        status = exc.response.status_code
+        # A bare "HTTP 403" sends people hunting for a bug on their end. This
+        # is a site refusing robots, which is a different thing entirely and
+        # is not fixable from here.
+        if status in (403, 503) and _is_bot_challenge(exc.response):
+            return Source(
+                url=url, fetched_at=now,
+                error="the site blocks automated readers (bot check)",
+            )
+        if status == 403:
+            return Source(url=url, fetched_at=now,
+                          error="the site refused us (HTTP 403)")
+        if status == 404:
+            return Source(url=url, fetched_at=now,
+                          error="page not found (HTTP 404)")
+        return Source(url=url, fetched_at=now, error=f"HTTP {status}")
     except httpx.HTTPError as exc:
         return Source(url=url, fetched_at=now, error=f"could not fetch: {exc}")
     except Exception as exc:  # a Pi should not die on one weird page

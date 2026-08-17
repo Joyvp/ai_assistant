@@ -145,18 +145,29 @@ def drain(*, verbose: bool = True, if_idle: bool = False) -> dict:
     if not ready:
         if verbose:
             print(f"  {YELLOW}nothing could be prepared{OFF}\n")
+        # Tell the user their question died. Silence after "apexis away" is
+        # indistinguishable from still working, and they will wait all day.
+        for job in pending:
+            current = research.load(job.id)
+            if current is not None and current.state is JobState.FAILED:
+                if _report_failure(current):
+                    summary["emailed"] += 1
         return summary
 
     fleet = load_fleet()
     host = fleet.laptop.host
     lifecycle = ModelLifecycle(host=host)
-    already_up = lifecycle.is_resident(LAPTOP_MODEL)
-
-    if verbose:
-        loads = "reusing" if already_up else "one load for all of them"
-        print(f"  {DIM}waking {LAPTOP_MODEL} — {loads}{OFF}")
 
     try:
+        # This probe used to sit outside the try. A refused connection here
+        # escaped drain() entirely and took the whole run down with it -
+        # under the timer that is an unexplained silence with no email.
+        already_up = lifecycle.is_resident(LAPTOP_MODEL)
+
+        if verbose:
+            loads = "reusing" if already_up else "one load for all of them"
+            print(f"  {DIM}waking {LAPTOP_MODEL} — {loads}{OFF}")
+
         with lifecycle.borrowed(LAPTOP_MODEL, unload_after=not already_up):
             provider = OllamaProvider(model=LAPTOP_MODEL, host=host)
             try:
@@ -174,11 +185,23 @@ def drain(*, verbose: bool = True, if_idle: bool = False) -> dict:
                         summary["failed"] += 1
                         if verbose:
                             print(f"  {RED}✗{OFF} {answered.question[:50]}")
+                        if _report_failure(answered):
+                            summary["emailed"] += 1
             finally:
                 provider.close()
     except (OllamaError, RuntimeError) as exc:
         if verbose:
             print(f"  {RED}the model is unreachable: {exc}{OFF}")
+        # The jobs stay PREPARED and will be retried, but the user is owed an
+        # explanation now rather than an unexplained silence.
+        if away.is_away() and ready:
+            mail.notify(
+                "[APEXIS] cannot reach the model",
+                f"{len(ready)} question(s) are ready to answer, but "
+                f"{LAPTOP_MODEL} could not be reached:\n\n  {exc}\n\n"
+                "Nothing was lost. They stay queued and will be tried again "
+                "at the next check.",
+            )
         return summary
 
     if verbose:
@@ -190,6 +213,43 @@ def drain(*, verbose: bool = True, if_idle: bool = False) -> dict:
         print()
 
     return summary
+
+
+def _report_failure(job: Job) -> bool:
+    """Tell the user a question could not be answered, and why.
+
+    A failure the user never hears about is worse than a failure: they sit
+    waiting for an email that is never coming.
+    """
+    if not away.is_away():
+        return False
+
+    lines = [f"This question could not be answered:", "", f"  {job.question}", ""]
+
+    bad = job.failed_sources
+    if bad:
+        lines.append("The pages could not be read:")
+        lines.append("")
+        for source in bad:
+            lines.append(f"  {source.url}")
+            lines.append(f"    {source.error}")
+        lines.append("")
+        if any("bot check" in (s.error or "") for s in bad):
+            lines += [
+                "A bot check means the site refuses automated readers. That "
+                "cannot be worked around from here.",
+                "",
+                "Try a source that allows it - Wikipedia, documentation "
+                "sites and news pages usually work.",
+                "",
+            ]
+    elif job.error:
+        lines += [job.error, ""]
+
+    lines.append("Nothing else was affected. Other questions ran normally.")
+
+    return mail.notify(f"[APEXIS] couldn't answer: {job.question[:60]}",
+                       "\n".join(lines))
 
 
 def _report(job: Job) -> bool:
