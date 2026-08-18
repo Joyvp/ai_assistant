@@ -54,13 +54,18 @@ _HEAVY_PATTERNS: list[tuple[str, int, str]] = [
     (r"\bexplain\b", 20, "explanation asked for"),
     (r"\bwhy\b", 20, "asks why, not what"),
     (r"\bhow (does|do|can|could|would|is|are)\b", 20, "asks for a mechanism"),
+    # "how X works" / "how X is done" - no auxiliary verb, so the pattern
+    # above walked straight past it.
+    (r"\bhow\b.{0,40}\b(works?|working|happens?|done|built|made)\b",
+     20, "asks how something works"),
     (r"\bwhat (makes|causes)\b", 20, "asks for a cause"),
     (r"\b(difference|differences) between\b", 15, "contrast"),
     # Holding two cases against each other is harder than describing one.
     (r"\bbut\b.{0,60}\b(cannot|can'?t|does ?n'?t|won'?t|isn'?t)\b",
      20, "contradiction to resolve"),
-    (r"\b(trade[- ]?off|implications|consequences|reasoning)\b",
-     15, "reasoning asked for"),
+    (r"\b(trade[- ]?offs?|implications|consequences|reasoning|"
+     r"limitations|drawbacks|risks?|failure modes?)\b",
+     20, "reasoning asked for"),
 ]
 
 # Specialist vocabulary. One such word means little; several together mean the
@@ -73,7 +78,20 @@ _TECHNICAL_TERMS = re.compile(
     r"gigabytes?|megabytes?|terabytes?|billion|allocation|concurrency|"
     r"asynchronous|protocol|encryption|compiler|runtime|firmware|"
     r"filesystem|partition|daemon|systemd|kubernetes|virtuali[sz]ation|"
-    r"ram|memory|cpu|gpu|ssd|models?|algorithms?|architecture"
+    r"ram|memory|cpu|gpu|ssd|models?|algorithms?|architecture|"
+    # Training, which the list was completely blind to. It was written
+    # from the running-a-model conversations we had already had, so a
+    # question about TRAINING fell straight through it.
+    r"train(ing|ed)?|fine[- ]?tun(e|ing)|dataset|datasets|gradients?|"
+    r"backpropagation|epochs?|overfitting|loss function|optimi[sz]er|"
+    r"hyperparameters?|distillation|reinforcement|"
+    # Safety and alignment, likewise absent.
+    r"containment|sandbox(ing|ed)?|alignment|aligned|jailbreak|"
+    r"guardrails?|red[- ]team(ing)?|interpretability|"
+    r"corrigibility|oversight|capabilities?|deception|"
+    # Systems vocabulary that shows up in deep questions.
+    r"isolation|privilege|air[- ]gap(ped)?|sanitiz(e|ation)|"
+    r"determinism|reproducib(le|ility)|scal(e|ing|ability)"
     r")\b"
 )
 
@@ -84,7 +102,13 @@ _LIGHT_PATTERNS: list[tuple[str, int, str]] = [
     (r"\b(remind me|add to list|note that|remember)\b", -30, "memory op"),
     (r"\b(yes|no|maybe|sure)\b\s*$", -30, "short answer"),
     (r"\b(summari[sz]e|tldr|shorten)\b", -15, "summarization"),
-    (r"\b(list|show|tell me)\b", -10, "simple retrieval"),
+    # "tell me my notes" is retrieval. "tell me how AI containment works"
+    # is not. The same two words meant opposite things and the discount was
+    # applied to both, so a hard question got cheaper for asking politely.
+    # Only discount when what follows is genuinely a lookup.
+    (r"\b(list|show|tell me)\b(?!.{0,40}\b"
+     r"(how|why|what makes|what causes|whether|explain|works?)\b)",
+     -10, "simple retrieval"),
 ]
 
 # Things that genuinely need current information from the internet.
@@ -157,11 +181,40 @@ class TierRouter:
             signals.append("+15 long request")
 
         # Multi-part requests are harder than their wording suggests.
-        parts = len(re.findall(r"\b(and then|also|after that|plus)\b", text))
+        parts = len(re.findall(
+            r"\b(and then|and also|also|after that|plus|as well as)\b", text))
         if parts:
             bump = min(parts * 10, 30)
             total += bump
             signals.append(f"+{bump} multi-step ({parts} steps)")
+
+        # Two separate QUESTIONS in one breath is a different thing from one
+        # question with two clauses. "why is X hard and also tell me how Y
+        # works" is two hard asks bolted together, and scored +10 total.
+        interrogatives = len(re.findall(
+            r"\b(why|how|what|when|where|which|whether)\b", text))
+        if interrogatives >= 2 and parts:
+            total += 20
+            signals.append("+20 two questions in one")
+
+        # -- the safety net -------------------------------------------
+        #
+        # Everything above is a keyword list, and a keyword list only knows
+        # what its author thought of. The training and safety vocabulary was
+        # missing entirely until a real question fell through it, and the
+        # next gap is one the author has not imagined yet.
+        #
+        # So: a substantial question asking WHY or HOW something works is
+        # never treated as trivial, whatever words it happens to use. The
+        # Pi's failure mode is not a visible error - it is a fluent,
+        # confident fabrication, which is far worse than a slow answer.
+        wants_explanation = re.search(
+            r"\b(why|how|explain|what (makes|causes)|"
+            r"trade[- ]?offs?|implications|consequences|"
+            r"limitations|drawbacks|risks?|failure modes?)\b", text)
+        if wants_explanation and total < 30:
+            total = 30
+            signals.append("+floor conceptual question, never trivial")
 
         return max(0, min(100, total)), signals
 

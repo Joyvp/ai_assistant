@@ -307,3 +307,115 @@ def test_the_cloud_is_still_never_reached_when_it_is_off():
     )
     decision = TierRouter(allow_cloud=False).decide(hard, laptop=_laptop())
     assert decision.tier is not Tier.CLOUD
+
+
+# -- the Pi's failure mode is a confident fabrication -----------------------
+#
+# The user asked why local training is hard and how AI containment works
+# during training. It scored 20 and went to the 1B model, which invented
+# "quasi-sandboxing" and being "washed clean" - neither is a real term -
+# and answered about deployment sandboxing instead of the safety question.
+#
+# That is the danger the router exists to prevent. A slow answer is a cost.
+# A fluent lie is a trap, because nothing about it looks wrong.
+
+
+SIMPLE = [
+    "hi", "thanks", "okay", "bye", "yes",
+    "what time is it", "what day is it",
+    "remind me to buy milk", "add milk to my list",
+    "note that i left at 5", "remember that my sister is joy",
+    "list my notes", "show me my tasks", "show me the queue",
+    "tell me my notes", "summarize this page", "what is a raspberry pi",
+]
+
+CONCEPTUAL = [
+    "tell me how ai containment works",
+    "why is the sky blue",
+    "how is a transformer different from an rnn",
+    "how does gradient descent avoid overfitting on a small dataset",
+    "what are the tradeoffs of red teaming an aligned model",
+    "what are the failure modes of running an llm on a raspberry pi",
+    "why is it very hard to maintain and train ai locally and also tell me "
+    "how ai containment work while they are training the ai in an sandbox",
+]
+
+
+def test_no_conceptual_question_reaches_the_pi():
+    from apexis_shared.routing import Tier
+
+    for question in CONCEPTUAL:
+        decision = _router().decide(question, laptop=_laptop())
+        assert decision.tier is not Tier.PI_LOCAL, (
+            f"{question!r} would be answered by the 1B model"
+        )
+
+
+def test_every_simple_phrase_stays_on_the_pi():
+    """The fix must not turn the router into 'send everything to the cloud'."""
+    from apexis_shared.routing import Tier
+
+    for phrase in SIMPLE:
+        decision = _router().decide(phrase, laptop=_laptop())
+        assert decision.tier is Tier.PI_LOCAL, f"{phrase!r} left the Pi"
+
+
+def test_tell_me_is_only_cheap_when_what_follows_is_cheap():
+    """The same two words meant opposite things and both got the discount."""
+    router = _router()
+    lookup, _ = router.score("tell me my notes")
+    concept, _ = router.score("tell me how ai containment works")
+    assert concept > lookup + 20
+
+
+def test_two_questions_in_one_breath_score_more_than_one():
+    router = _router()
+    single, _ = router.score("why is it hard to train ai locally")
+    double, _ = router.score(
+        "why is it hard to train ai locally and also tell me how "
+        "ai containment works"
+    )
+    assert double > single
+
+
+def test_training_vocabulary_is_not_invisible():
+    """The term list was built from conversations already had, and had no
+    training words at all - so a training question fell straight through."""
+    router = _router()
+    for term in ("fine-tuning", "dataset", "gradients", "overfitting",
+                 "distillation", "hyperparameters"):
+        score, _ = router.score(f"how does {term} affect the result")
+        assert score >= 30, f"{term!r} scored {score}"
+
+
+def test_safety_vocabulary_is_not_invisible():
+    router = _router()
+    for term in ("containment", "alignment", "jailbreak", "guardrails",
+                 "interpretability", "red teaming"):
+        score, _ = router.score(f"how does {term} work in practice")
+        assert score >= 30, f"{term!r} scored {score}"
+
+
+def test_an_unknown_topic_still_cannot_be_called_trivial():
+    """The real protection: a keyword list only knows what its author
+    imagined. A conceptual question about something never anticipated must
+    still not land on the Pi."""
+    from apexis_shared.routing import Tier
+
+    for question in (
+        "why does sourdough starter collapse after peaking",
+        "how does a differential gearbox split torque",
+        "explain why brass instruments need valves but trombones do not",
+    ):
+        decision = _router().decide(question, laptop=_laptop())
+        assert decision.tier is not Tier.PI_LOCAL, f"{question!r} hit the Pi"
+
+
+def test_the_floor_never_overrides_cloud_consent():
+    from apexis_core.tier_router import TierRouter
+    from apexis_shared.routing import Tier
+
+    decision = TierRouter(allow_cloud=False).decide(
+        CONCEPTUAL[-1], laptop=_laptop()
+    )
+    assert decision.tier is not Tier.CLOUD
