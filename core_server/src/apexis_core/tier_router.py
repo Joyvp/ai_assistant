@@ -41,7 +41,41 @@ _HEAVY_PATTERNS: list[tuple[str, int, str]] = [
     (r"\b(production|polished|professional|investor|client)\b", 20, "quality bar"),
     (r"\b(step[- ]by[- ]step|in detail|comprehensive|thorough)\b", 15, "depth requested"),
     (r"```|\bcode\b", 15, "code involved"),
+
+    # -- reasoning, not vocabulary ----------------------------------------
+    #
+    # A real question exposed the gap: "explain why a mixture of experts model
+    # can run 26 billion parameters in 2 gigabytes of ram but a normal 7b
+    # model cannot" scored ZERO and went to the 1B model on the Pi. It hit no
+    # keyword, so the router called it as simple as "hi".
+    #
+    # Asking *why* something is true is a different kind of work from asking
+    # *what* it is. Retrieval is easy; explaining a mechanism is not.
+    (r"\bexplain\b", 20, "explanation asked for"),
+    (r"\bwhy\b", 20, "asks why, not what"),
+    (r"\bhow (does|do|can|could|would|is|are)\b", 20, "asks for a mechanism"),
+    (r"\bwhat (makes|causes)\b", 20, "asks for a cause"),
+    (r"\b(difference|differences) between\b", 15, "contrast"),
+    # Holding two cases against each other is harder than describing one.
+    (r"\bbut\b.{0,60}\b(cannot|can'?t|does ?n'?t|won'?t|isn'?t)\b",
+     20, "contradiction to resolve"),
+    (r"\b(trade[- ]?off|implications|consequences|reasoning)\b",
+     15, "reasoning asked for"),
 ]
+
+# Specialist vocabulary. One such word means little; several together mean the
+# question is technical enough that a 1B model will produce fluent nonsense.
+_TECHNICAL_TERMS = re.compile(
+    r"\b("
+    r"parameters?|quanti[sz]ed?|quanti[sz]ation|inference|latency|throughput|"
+    r"bandwidth|kernel|cache|token|tokens|embedding|gradient|neural|"
+    r"mixture of experts|moe|transformer|attention|checkpoint|weights|"
+    r"gigabytes?|megabytes?|terabytes?|billion|allocation|concurrency|"
+    r"asynchronous|protocol|encryption|compiler|runtime|firmware|"
+    r"filesystem|partition|daemon|systemd|kubernetes|virtuali[sz]ation|"
+    r"ram|memory|cpu|gpu|ssd|models?|algorithms?|architecture"
+    r")\b"
+)
 
 # Things the Pi's tiny model handles fine.
 _LIGHT_PATTERNS: list[tuple[str, int, str]] = [
@@ -106,6 +140,14 @@ class TierRouter:
             if re.search(pattern, text):
                 total += weight
                 signals.append(f"{weight} {label}")
+
+        # Technical density. Scored on distinct terms, so repeating one word
+        # cannot inflate it.
+        technical = len(set(_TECHNICAL_TERMS.findall(text)))
+        if technical >= 2:
+            bump = min(15 + (technical - 2) * 10, 35)
+            total += bump
+            signals.append(f"+{bump} technical ({technical} terms)")
 
         if len(text) > _VERY_LONG_TASK_CHARS:
             total += 25

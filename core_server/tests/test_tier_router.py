@@ -212,3 +212,98 @@ def test_only_cloud_leaves_home() -> None:
     assert Tier.PI_LOCAL.leaves_home is False
     assert Tier.LAPTOP.leaves_home is False
     assert Tier.CLOUD.leaves_home is True
+
+
+# -- the router was deaf to difficulty --------------------------------------
+#
+# A real question from the user went to the 1B model on the Pi:
+#
+#   "explain why a mixture of experts model can run 26 billion parameters
+#    in 2 gigabytes of ram but a normal 7b model cannot"
+#
+# It scored ZERO - the same as "hi". It contained no keyword from the heavy
+# list, and the router only ever looked at vocabulary, never at what was
+# being asked for. A question can be hard without using hard words.
+
+
+def _router():
+    from apexis_core.tier_router import TierRouter
+
+    return TierRouter(allow_cloud=True)
+
+
+def _laptop():
+    from apexis_shared.routing import NodeCapability
+
+    return NodeCapability(node="laptop", online=True)
+
+
+def test_the_moe_question_no_longer_goes_to_the_pi():
+    from apexis_shared.routing import Tier
+
+    question = (
+        "explain why a mixture of experts model can run 26 billion "
+        "parameters in 2 gigabytes of ram but a normal 7b model cannot"
+    )
+    decision = _router().decide(question, laptop=_laptop())
+    assert decision.tier is Tier.CLOUD
+    assert decision.complexity >= 75
+
+
+def test_asking_why_scores_higher_than_asking_what():
+    """Explaining a mechanism is different work from naming a thing."""
+    router = _router()
+    what, _ = router.score("what is a raspberry pi")
+    why, _ = router.score("why is a raspberry pi slower than a laptop")
+    assert why > what
+
+
+def test_technical_density_counts_distinct_terms():
+    """Repeating one word must not inflate the score."""
+    router = _router()
+    repeated, _ = router.score("parameters parameters parameters parameters")
+    varied, _ = router.score("parameters quantization inference bandwidth")
+    assert varied > repeated
+
+
+def test_small_talk_still_stays_on_the_pi():
+    """The fix must not push everything to the cloud."""
+    from apexis_shared.routing import Tier
+
+    router = _router()
+    for phrase in ("hi", "thanks", "what time is it", "remind me to buy milk",
+                   "list my notes", "yes", "summarize this page",
+                   "what is a raspberry pi"):
+        decision = router.decide(phrase, laptop=_laptop())
+        assert decision.tier is Tier.PI_LOCAL, f"{phrase!r} should stay on the Pi"
+
+
+def test_a_moderately_technical_question_reaches_the_laptop():
+    from apexis_shared.routing import Tier
+
+    decision = _router().decide(
+        "how does quantization reduce model size", laptop=_laptop()
+    )
+    assert decision.tier is Tier.LAPTOP
+
+
+def test_a_contradiction_to_resolve_scores_for_reasoning():
+    router = _router()
+    plain, _ = router.score("describe how model memory works")
+    tension, _ = router.score(
+        "why does one model fit in memory but another cannot"
+    )
+    assert tension > plain
+
+
+def test_the_cloud_is_still_never_reached_when_it_is_off():
+    """Escalation must never override the user's consent setting."""
+    from apexis_core.tier_router import TierRouter
+    from apexis_shared.routing import Tier
+
+    hard = (
+        "explain why a mixture of experts model can run 26 billion "
+        "parameters in 2 gigabytes of ram but a normal 7b model cannot"
+    )
+    decision = TierRouter(allow_cloud=False).decide(hard, laptop=_laptop())
+    assert decision.tier is not Tier.CLOUD
