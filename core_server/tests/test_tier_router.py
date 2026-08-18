@@ -419,3 +419,88 @@ def test_the_floor_never_overrides_cloud_consent():
         CONCEPTUAL[-1], laptop=_laptop()
     )
     assert decision.tier is not Tier.CLOUD
+
+
+# -- a four-part question scored 50 -----------------------------------------
+#
+# "tell me how a big parameter ai model can be compromized to fit in 8 gigs
+#  ... If it can not fit ... what is the minimum ram ... and what is the
+#  maximum ability ..."
+#
+# Three gaps at once: "how a model CAN BE" put the modal six words after
+# "how", the sub-questions were joined by sentence breaks rather than "and
+# also", and asking for a minimum figure scored nothing.
+
+
+PERSONAL = [
+    "how much milk do i have",
+    "how many tasks do i have",
+    "what is the maximum on my list",
+    "when did i last go out",
+    "where did i put my keys",
+    "what do i have left to do",
+]
+
+
+def test_the_four_part_ram_question_reaches_the_cloud():
+    from apexis_shared.routing import Tier
+
+    question = (
+        "tell me how a big parameter ai model can be compromized to fit in "
+        "maximum 8 gigabytes of ram while running 100% locally and it being "
+        "able to keep learning more new things while constantly handleing a "
+        "server. If it can not fit in 8 gigs of ram what is the minimum "
+        "amount of ram needed for an ai model to do what was mentioned above "
+        "and what is the maximum ability a local ai model can do with 8 gigs "
+        "of ram"
+    )
+    decision = _router().decide(question, laptop=_laptop())
+    assert decision.tier is Tier.CLOUD
+    assert decision.complexity >= 90
+
+
+def test_a_late_modal_still_counts_as_asking_for_a_mechanism():
+    """'how a model CAN BE compressed' - six words between how and can."""
+    router = _router()
+    score, _ = router.score(
+        "how a big parameter ai model can be compressed to fit in memory"
+    )
+    assert score >= 30
+
+
+def test_questions_split_by_sentences_count_as_several():
+    """They used to need 'and also' to count as more than one ask."""
+    router = _router()
+    one, _ = router.score("what is the minimum ram for a model")
+    many, _ = router.score(
+        "what is the minimum ram for a model. If it does not fit what is "
+        "the maximum size. and what happens then"
+    )
+    assert many > one + 20
+
+
+def test_asking_for_a_figure_scores():
+    """A 1B model will invent a number as happily as it invents a term."""
+    router = _router()
+    score, _ = router.score("what is the minimum ram needed to fine tune a 7b model")
+    assert score >= 30
+
+
+def test_questions_about_the_users_own_data_stay_on_the_pi():
+    """The counterweight: 'how much milk do i have' is a lookup, not
+    research, and belongs on the cheapest tier."""
+    from apexis_shared.routing import Tier
+
+    for question in PERSONAL:
+        decision = _router().decide(question, laptop=_laptop())
+        assert decision.tier is Tier.PI_LOCAL, f"{question!r} left the Pi"
+
+
+def test_tell_me_how_x_works_is_not_personal_just_because_it_says_me():
+    """'me' is an object pronoun here, not the subject of the question."""
+    from apexis_shared.routing import Tier
+
+    decision = _router().decide(
+        "tell me how ai containment works", laptop=_laptop()
+    )
+    assert decision.tier is not Tier.PI_LOCAL

@@ -58,6 +58,20 @@ _HEAVY_PATTERNS: list[tuple[str, int, str]] = [
     # above walked straight past it.
     (r"\bhow\b.{0,40}\b(works?|working|happens?|done|built|made)\b",
      20, "asks how something works"),
+    # "how a big parameter model CAN BE compromised" - the modal arrives six
+    # words after "how", so the tight patterns above walked past it.
+    (r"\bhow\b.{0,60}\b(can|could|would|should|might|must)\b",
+     20, "asks how something can be done"),
+    # A conditional is a second scenario to reason about, not a clause.
+    (r"\bif (it|that|this|they|you|we)\b.{0,40}\b(can'?t|cannot|does ?n'?t|"
+     r"is ?n'?t|fails?|won'?t)\b", 20, "conditional fallback asked for"),
+    # Asking for a number is a quantitative ask, which a 1B model will
+    # cheerfully invent.
+    # Not when it is about the user's own stuff: "how much milk do i have"
+    # is a lookup in their own notes, not a quantitative research question.
+    (r"\b(minimum|maximum|how much|how many|what size|at least)\b"
+     r"(?!.{0,30}\b(i|my|me|mine|our)\b)",
+     15, "asks for a specific figure"),
     (r"\bwhat (makes|causes)\b", 20, "asks for a cause"),
     (r"\b(difference|differences) between\b", 15, "contrast"),
     # Holding two cases against each other is harder than describing one.
@@ -191,9 +205,19 @@ class TierRouter:
         # Two separate QUESTIONS in one breath is a different thing from one
         # question with two clauses. "why is X hard and also tell me how Y
         # works" is two hard asks bolted together, and scored +10 total.
+        # Counting separate ASKS. This used to require a conjunction like
+        # "and also", so a question built from sentences - "... how X? If not,
+        # what is Y? And what is the maximum Z?" - counted as one ask and
+        # scored nothing for being three. Conjunctions are one way to join
+        # questions, not the only way.
         interrogatives = len(re.findall(
             r"\b(why|how|what|when|where|which|whether)\b", text))
-        if interrogatives >= 2 and parts:
+        asks = max(interrogatives, len(re.findall(r"[.?!]\s+\S", text)) + 1
+                   if interrogatives >= 2 else interrogatives)
+        if asks >= 3:
+            total += 30
+            signals.append(f"+30 several questions in one ({asks} asks)")
+        elif asks >= 2:
             total += 20
             signals.append("+20 two questions in one")
 
@@ -212,7 +236,20 @@ class TierRouter:
             r"\b(why|how|explain|what (makes|causes)|"
             r"trade[- ]?offs?|implications|consequences|"
             r"limitations|drawbacks|risks?|failure modes?)\b", text)
-        if wants_explanation and total < 30:
+
+        # ...unless it is about the user's own data. "how much milk do i
+        # have" and "how many tasks do i have" are lookups in their notes,
+        # and the Pi is exactly the right place for those.
+        # "tell me how X works" contains "me" but is not about the user.
+        # What signals personal data is a possessive ("my notes") or the
+        # user as the subject of the verb ("do i have", "did i put").
+        about_the_user = bool(
+            re.search(r"\b(my|mine|our)\b", text)
+            or re.search(r"\b(do|did|does|have|am|was|can|should) i\b", text)
+            or re.search(r"\bi (have|left|put|said|need|want)\b", text)
+        ) and len(text) < 70
+
+        if wants_explanation and not about_the_user and total < 30:
             total = 30
             signals.append("+floor conceptual question, never trivial")
 
