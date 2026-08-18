@@ -92,8 +92,10 @@ def build_parser() -> argparse.ArgumentParser:
         "action",
         nargs="?",
         default="show",
-        choices=["show", "on", "off", "handoff", "api", "key", "provider", "providers"],
-        help="show (default), on, off, handoff, api, key, provider <name>",
+        choices=["show", "on", "off", "handoff", "api", "key", "provider",
+                 "providers", "models", "model", "test"],
+        help="show (default), on, off, handoff, api, key, "
+             "provider <name>, models, model <name>, test",
     )
     cloud_parser.add_argument("value", nargs="?", help="key or provider name")
 

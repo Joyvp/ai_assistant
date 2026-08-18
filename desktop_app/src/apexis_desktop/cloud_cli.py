@@ -90,7 +90,65 @@ def set_mode(mode: str) -> int:
     return 0
 
 
+def models() -> int:
+    """Ask the provider what it hosts right now.
+
+    A hardcoded model ID in this file died the day before it was first used,
+    and the failure looked like a broken URL. This is the antidote: never
+    guess what a provider hosts, ask it.
+    """
+    provider = cloud.current_provider()
+    spec = cloud.PROVIDERS[provider]
+
+    print(f"\n  {DIM}asking {spec['label']} what it hosts...{OFF}")
+    try:
+        names = cloud.available_models()
+    except cloud.CloudError as exc:
+        print(f"\n  {RED}{exc}{OFF}\n")
+        return 1
+
+    if not names:
+        print(f"\n  {YELLOW}{spec['label']} listed no models{OFF}\n")
+        return 1
+
+    configured = spec["model"]
+    live = configured in names
+
+    print(f"\n  {BOLD}{spec['label']} has {len(names)} models{OFF}\n")
+    for name in names:
+        mark = f"  {GREEN}<- in use{OFF}" if name == configured else ""
+        print(f"    {name}{mark}")
+
+    print()
+    if live:
+        print(f"  {GREEN}{configured} is available.{OFF}\n")
+    else:
+        # This is the case that actually bit the user.
+        print(f"  {RED}{configured} is NOT in that list — it has been "
+              f"retired.{OFF}")
+        print(f"  {DIM}Pick one above and set it with:{OFF}")
+        print(f"    {BOLD}apexis cloud model <name>{OFF}\n")
+    return 0
+
+
+def set_model(name: str) -> int:
+    provider = cloud.current_provider()
+    spec = cloud.PROVIDERS[provider]
+    cloud.set_setting(f"model_{provider}", name)
+    print(f"\n  {spec['label']} model is now {BOLD}{name}{OFF}")
+    print(f"  {DIM}check it works:  apexis cloud test{OFF}\n")
+    return 0
+
+
 def main(action: str = "show", value: str | None = None) -> int:
+    if action == "models":
+        return models()
+
+    if action == "model":
+        if not value:
+            return models()
+        return set_model(value)
+
     if action in {"off", "handoff", "api"}:
         return set_mode(action)
 

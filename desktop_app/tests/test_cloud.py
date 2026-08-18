@@ -351,3 +351,121 @@ def test_the_providers_list_says_who_trains_on_your_data(capsys):
 
     assert "trains on your data" in out
     assert "Google may train" in out
+
+
+# -- a hardcoded model ID died one day before it was used -------------------
+#
+# llama-3.3-70b-versatile was shut down on 2026-08-16. The user's first real
+# cloud question was 2026-08-17. Groq returned 404, which reads like a broken
+# URL rather than a retired model, and the router silently fell back to the
+# laptop - correct behaviour, unhelpful message.
+#
+# The lesson is not "update the string". It is that a model ID in source is a
+# snapshot with an expiry date nobody knows.
+
+
+class _Response:
+    def __init__(self, status=200, payload=None):
+        self.status_code = status
+        self._payload = payload or {}
+
+    def json(self):
+        return self._payload
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            import httpx
+
+            raise httpx.HTTPStatusError(
+                f"{self.status_code}", request=None, response=self
+            )
+
+
+def test_a_dead_model_says_so_instead_of_looking_like_a_broken_url(tmp_path):
+    import httpx
+    from apexis_desktop import cloud
+
+    config = tmp_path / "cloud.json"
+    cloud.set_api_key("groq", "gsk_test", path=config)
+
+    class Client:
+        def post(self, *a, **k):
+            return _Response(404)
+
+        def close(self):
+            pass
+
+    try:
+        cloud.ask_online("hi", provider="groq", path=config, client=Client())
+        raise AssertionError("should have raised")
+    except cloud.CloudError as exc:
+        message = str(exc)
+        assert "no longer has" in message
+        assert "apexis cloud models" in message, "point at the way out"
+
+
+def test_the_model_can_be_overridden_without_a_new_release(tmp_path):
+    """A provider retiring a model must not require shipping new code."""
+    from apexis_desktop import cloud
+
+    config = tmp_path / "cloud.json"
+    assert cloud.model_for("groq", path=config) == cloud.PROVIDERS["groq"]["model"]
+
+    cloud.set_setting("model_groq", "qwen/qwen3.6-27b", path=config)
+    assert cloud.model_for("groq", path=config) == "qwen/qwen3.6-27b"
+
+
+def test_the_override_is_what_actually_gets_sent(tmp_path):
+    from apexis_desktop import cloud
+
+    config = tmp_path / "cloud.json"
+    cloud.set_api_key("groq", "gsk_test", path=config)
+    cloud.set_setting("model_groq", "openai/gpt-oss-20b", path=config)
+
+    sent = {}
+
+    class Client:
+        def post(self, url, headers=None, json=None):
+            sent.update(json or {})
+            return _Response(200, {"choices": [{"message": {"content": "ok"}}]})
+
+        def close(self):
+            pass
+
+    cloud.ask_online("hi", provider="groq", path=config, client=Client())
+    assert sent["model"] == "openai/gpt-oss-20b"
+
+
+def test_available_models_asks_the_provider(tmp_path):
+    from apexis_desktop import cloud
+
+    config = tmp_path / "cloud.json"
+    cloud.set_api_key("groq", "gsk_test", path=config)
+
+    class Client:
+        def get(self, url, headers=None):
+            assert "models" in url
+            return _Response(200, {"data": [
+                {"id": "openai/gpt-oss-120b"},
+                {"id": "openai/gpt-oss-20b"},
+            ]})
+
+        def close(self):
+            pass
+
+    names = cloud.available_models("groq", path=config, client=Client())
+    assert names == ["openai/gpt-oss-120b", "openai/gpt-oss-20b"]
+
+
+def test_the_default_groq_model_is_not_the_retired_one():
+    from apexis_desktop import cloud
+
+    assert cloud.PROVIDERS["groq"]["model"] != "llama-3.3-70b-versatile"
+
+
+def test_the_models_command_is_reachable_and_dispatched():
+    """Sixth-bug rule: parser AND main()."""
+    from apexis_desktop.cli import build_parser
+
+    for action in ("models", "model"):
+        assert build_parser().parse_args(["cloud", action]).action == action

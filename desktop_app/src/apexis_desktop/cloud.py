@@ -40,7 +40,13 @@ PROVIDERS: dict[str, dict[str, str]] = {
     "groq": {
         "label": "Groq",
         "url": "https://api.groq.com/openai/v1/chat/completions",
-        "model": "llama-3.3-70b-versatile",
+        # llama-3.3-70b-versatile was shut down on 2026-08-16. Hosted model
+        # IDs are not stable and a dead one returns 404, which reads like a
+        # broken URL rather than a retired model. See models_url below: the
+        # error path now asks the provider what it actually hosts.
+        "model": "openai/gpt-oss-120b",
+        "models_url": "https://api.groq.com/openai/v1/models",
+        "fallback_models": "openai/gpt-oss-20b,qwen/qwen3.6-27b",
         "key_env": "GROQ_API_KEY",
         "signup": "https://console.groq.com",
         "free": "14,400 requests/day, no credit card",
@@ -50,6 +56,7 @@ PROVIDERS: dict[str, dict[str, str]] = {
         "label": "OpenRouter",
         "url": "https://openrouter.ai/api/v1/chat/completions",
         "model": "meta-llama/llama-3.3-70b-instruct:free",
+        "models_url": "https://openrouter.ai/api/v1/models",
         "key_env": "OPENROUTER_API_KEY",
         "signup": "https://openrouter.ai/keys",
         "free": "50 requests/day, no credit card",
@@ -250,6 +257,38 @@ def copy_to_clipboard(text: str) -> bool:
 # -- the online call -------------------------------------------------------
 
 
+def set_setting(key: str, value: str, *, path: pathlib.Path | None = None) -> None:
+    """Store an override in cloud.json."""
+    target = path or CONFIG_PATH
+    try:
+        data = json.loads(target.read_text())
+    except (OSError, ValueError):
+        data = {}
+    data[key] = value
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(json.dumps(data, indent=2))
+    try:
+        target.chmod(0o600)
+    except OSError:
+        pass
+
+
+def model_for(provider: str, *, path: pathlib.Path | None = None) -> str:
+    """The model to use, preferring a user override over the built-in default.
+
+    The built-in is a snapshot of what the provider hosted when this was
+    written. Providers retire models, so the user must be able to move on
+    without waiting for a new release.
+    """
+    target = path or CONFIG_PATH
+    try:
+        data = json.loads(target.read_text())
+    except (OSError, ValueError):
+        data = {}
+    override = str(data.get(f"model_{provider}", "")).strip()
+    return override or PROVIDERS[provider]["model"]
+
+
 def ask_online(
     task: str,
     *,
@@ -293,11 +332,20 @@ def ask_online(
                 "Authorization": f"Bearer {key}",
                 "Content-Type": "application/json",
             },
-            json={"model": spec["model"], "messages": messages},
+            json={"model": model_for(provider, path=path), "messages": messages},
         )
 
         if response.status_code == 401:
             raise CloudError(f"{spec['label']} rejected the key")
+        if response.status_code == 404:
+            # A 404 here means the MODEL is gone, not the URL. Hosted models
+            # get retired on a few weeks' notice, so ask the provider what it
+            # hosts now rather than making the user guess.
+            raise CloudError(
+                f"{spec['label']} no longer has "
+                f"{model_for(provider, path=path)!r}. "
+                f"Hosted models get retired - see: apexis cloud models"
+            )
         if response.status_code == 429:
             raise CloudError(
                 f"{spec['label']} rate limit reached — free tier is "
@@ -313,6 +361,59 @@ def ask_online(
     except httpx.HTTPError as exc:
         raise CloudError(f"could not reach {spec['label']}: {exc}") from exc
     except (KeyError, IndexError, ValueError) as exc:
+        raise CloudError(f"{spec['label']} sent something unexpected: {exc}") from exc
+    finally:
+        if owns:
+            client.close()
+
+
+def current_provider(*, path: pathlib.Path | None = None) -> str:
+    return get_provider(path)
+
+
+def available_models(
+    provider: str = "",
+    *,
+    path: pathlib.Path | None = None,
+    client: httpx.Client | None = None,
+    timeout: float = 20.0,
+) -> list[str]:
+    """Ask the provider which models it actually hosts right now.
+
+    Written because a hardcoded model ID died one day before it was used.
+    A list in the source is a snapshot; this is the truth.
+    """
+    provider = provider or current_provider(path=path)
+    if provider not in PROVIDERS:
+        raise CloudError(f"unknown provider {provider!r}")
+
+    spec = PROVIDERS[provider]
+    url = spec.get("models_url", "")
+    if not url:
+        raise CloudError(f"{spec['label']} has no model list endpoint")
+
+    key = api_key(provider, path=path)
+    if not key:
+        raise CloudError(f"no {spec['label']} key set - apexis cloud key <key>")
+
+    owns = client is None
+    client = client or httpx.Client(timeout=timeout, trust_env=False)
+    try:
+        response = client.get(url, headers={"Authorization": f"Bearer {key}"})
+        response.raise_for_status()
+        payload = response.json()
+        rows = payload.get("data", payload) if isinstance(payload, dict) else payload
+        names = []
+        for row in rows or []:
+            name = row.get("id") if isinstance(row, dict) else str(row)
+            if name:
+                names.append(str(name))
+        return sorted(names)
+    except CloudError:
+        raise
+    except httpx.HTTPError as exc:
+        raise CloudError(f"could not reach {spec['label']}: {exc}") from exc
+    except (KeyError, ValueError, TypeError) as exc:
         raise CloudError(f"{spec['label']} sent something unexpected: {exc}") from exc
     finally:
         if owns:
